@@ -66,14 +66,18 @@ jobs:
 
     - name: Report failures as annotations
       if: failure()
-      shell: cmd
+      shell: pwsh
       run: |
-        set "LOG=%APPVEYOR_BUILD_FOLDER%\build.log"
-        if not exist "%LOG%" exit /b 0
-        findstr /N /C:": error" /C:"error C" /C:"error LNK" /C:": fatal error" /C:"!! ERROR" "%LOG%" > "%APPVEYOR_BUILD_FOLDER%\errors.txt"
-        type "%APPVEYOR_BUILD_FOLDER%\errors.txt"
-        for /f "tokens=1,* delims=:" %%A in ('findstr /N "^" "%LOG%" ^| findstr /R "^[0-9]*:[0-9]*:"') do @echo ::error::%%B
-        exit /b 0
+        $log = Join-Path $env:APPVEYOR_BUILD_FOLDER 'build.log'
+        if (-not (Test-Path $log)) { Write-Host 'no build.log'; exit 0 }
+        $lines = Get-Content -LiteralPath $log
+        Write-Host "log lines: $($lines.Count)"
+        $hits = $lines | Select-String -Pattern 'error C[0-9]|error LNK|fatal error|!! ERROR|NMAKE : ' -AllMatches
+        foreach ($h in $hits | Select-Object -First 60) {
+          Write-Host ("::error::" + $h.Line.Trim())
+        }
+        Write-Host '--- last 40 lines ---'
+        $lines | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }
 
     - name: Upload build log
       if: always()
