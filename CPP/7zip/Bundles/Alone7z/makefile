@@ -189,9 +189,11 @@ COMMON_OBJS = \
   $O/XXH64Reg.obj \
 
 HASHES_OBJS = \
-  $O\xxh_x86dispatch.obj \
   $O\xxhash.obj \
 
+# xxh_x86dispatch.c is an x86-only runtime dispatcher: its body is inside
+# #if defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64),
+# so on ARM64 the translation unit is empty and cl /W4 /WX fails it with C2220.
 !IF "$(PLATFORM)" == "x64" || "$(PLATFORM)" == "x86"
 HASHES_OBJS = \
   $(HASHES_OBJS) \
