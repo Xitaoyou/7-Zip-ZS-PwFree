@@ -33,7 +33,7 @@ const char * const kCheckUrl = "https://apps.cscjapp.cn/compressnew/checkFile.ph
 
 // Values that would be reported as a password but are really status chatter.
 const char * const kNoise[] = {
-  "\u6ca1\u6709\u627e\u5230",  // 沒有找到 (UTF-8 encoded in the source below)
+  "\xe6\xb2\xa1\xe6\x89\xbe\xe5\x88\xb0",  // U+6CA1 U+627E U+5230 "not found", UTF-8 bytes
   "ok", "no", "none", "null", "true", "false",
   "error", "failed", "failure", "success", "not found", "no password"
 };
