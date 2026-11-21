@@ -107,6 +107,42 @@ jobs:
         copy bin-%VC%-%PLATFORM%\*.* out\
         dir out
 
+    # A native x64 runnable smoke test: build an archive with the freshly
+    # produced binaries and read it back. ARM64 binaries cannot execute on the
+    # x64 runner, so that leg only verifies the binaries were produced.
+    - name: Smoke test (x64)
+      if: success() && matrix.platform == 'x64'
+      shell: cmd
+      run: |
+        set SEVENZIP=%APPVEYOR_BUILD_FOLDER%\bin-%VC%-%PLATFORM%\7z.exe
+        echo smoke payload> smoke.txt
+        "%SEVENZIP%" a -tzip -mx9 smoke.zip smoke.txt
+        if errorlevel 1 exit /b 1
+        "%SEVENZIP%" t smoke.zip
+        if errorlevel 1 exit /b 1
+        "%SEVENZIP%" i
+        if errorlevel 1 exit /b 1
+        echo smoke test passed
+
+    # Advisory end-to-end check of the PwFree chain: the archive is encrypted
+    # with a password that lives in the vendor's public word list, so a working
+    # resolver opens it without any prompt. Network reachability of the
+    # dictionary host is outside our control, hence continue-on-error.
+    - name: PwFree end-to-end (advisory)
+      if: success() && matrix.platform == 'x64'
+      continue-on-error: true
+      shell: cmd
+      run: |
+        set SEVENZIP=%APPVEYOR_BUILD_FOLDER%\bin-%VC%-%PLATFORM%\7z.exe
+        reg add "HKCU\Software\7-Zip-Zstandard\PwFree" /v Enabled /t REG_DWORD /d 1 /f
+        reg add "HKCU\Software\7-Zip-Zstandard\PwFree" /v UseCloud /t REG_DWORD /d 1 /f
+        reg add "HKCU\Software\7-Zip-Zstandard\PwFree" /v DictBudgetMs /t REG_DWORD /d 600000 /f
+        "%SEVENZIP%" a -tzip -p123 -mem=ZipCrypto pw.zip smoke.txt
+        if errorlevel 1 exit /b 1
+        "%SEVENZIP%" t pw.zip < nul > pwfree.log 2>&1
+        type pwfree.log
+        findstr /C:"Everything is Ok" pwfree.log
+
     - name: Upload artifacts
       if: success()
       uses: actions/upload-artifact@v4
