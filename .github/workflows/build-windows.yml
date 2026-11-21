@@ -21,7 +21,7 @@ jobs:
             arch: x64
             artifact: win-x64
           - platform: arm64
-            arch: arm64
+            arch: amd64_arm64
             artifact: win-arm64
 
     runs-on: windows-latest
@@ -57,18 +57,23 @@ jobs:
       working-directory: CPP
       run: |
         call build-it.cmd -all > "%APPVEYOR_BUILD_FOLDER%\build.log" 2>&1
-        set BUILD_RC=%ERRORLEVEL%
-        type "%APPVEYOR_BUILD_FOLDER%\build.log"
-        findstr /N /C:"error" /C:"Error" /C:"ERROR" /C:"fatal" "%APPVEYOR_BUILD_FOLDER%\build.log" > "%APPVEYOR_BUILD_FOLDER%\errors.txt"
-        type "%APPVEYOR_BUILD_FOLDER%\errors.txt"
-        exit /b %BUILD_RC%
+        exit /b %ERRORLEVEL%
 
-    - name: Report errors as annotations
+    - name: Show build log
+      if: always()
+      shell: cmd
+      run: type "%APPVEYOR_BUILD_FOLDER%\build.log"
+
+    - name: Report failures as annotations
       if: failure()
       shell: cmd
       run: |
-        if not exist "%APPVEYOR_BUILD_FOLDER%\errors.txt" exit /b 0
-        for /f "usebackq delims=" %%L in ("%APPVEYOR_BUILD_FOLDER%\errors.txt") do echo ::error::%%L
+        set "LOG=%APPVEYOR_BUILD_FOLDER%\build.log"
+        if not exist "%LOG%" exit /b 0
+        findstr /N /C:": error" /C:"error C" /C:"error LNK" /C:": fatal error" /C:"!! ERROR" "%LOG%" > "%APPVEYOR_BUILD_FOLDER%\errors.txt"
+        type "%APPVEYOR_BUILD_FOLDER%\errors.txt"
+        for /f "tokens=1,* delims=:" %%A in ('findstr /N "^" "%LOG%" ^| findstr /R "^[0-9]*:[0-9]*:"') do @echo ::error::%%B
+        exit /b 0
 
     - name: Upload build log
       if: always()
