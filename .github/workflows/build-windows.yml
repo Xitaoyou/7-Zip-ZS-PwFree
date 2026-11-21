@@ -19,28 +19,24 @@ jobs:
         include:
           - platform: x64
             arch: x64
-            runner: windows-latest
             artifact: win-x64
           - platform: arm64
             arch: arm64
-            runner: windows-latest
             artifact: win-arm64
 
-    runs-on: ${{ matrix.runner }}
+    runs-on: windows-latest
 
     env:
       PLATFORM: ${{ matrix.platform }}
       VC: v143
       SUBSYS: "6.00"
-      STOP_ON_ERROR: "1"
-      ZIP7_DARKMODE: "1"
       APPVEYOR_BUILD_FOLDER: ${{ github.workspace }}
+      ZIP7_DARKMODE: "0"
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        submodules: recursive
         fetch-depth: 1
 
     - name: Set up MSVC ${{ matrix.arch }}
@@ -52,15 +48,38 @@ jobs:
     - name: Show toolchain
       shell: cmd
       run: |
-        cl 2>&1 | findstr /C:"Version"
+        where cl
+        cl
         echo PLATFORM=%PLATFORM% VC=%VC% SUBSYS=%SUBSYS%
 
     - name: Build all bundles
       shell: cmd
       working-directory: CPP
-      run: build-it.cmd -all
+      run: |
+        call build-it.cmd -all > "%APPVEYOR_BUILD_FOLDER%\build.log" 2>&1
+        set BUILD_RC=%ERRORLEVEL%
+        type "%APPVEYOR_BUILD_FOLDER%\build.log"
+        findstr /N /C:"error" /C:"Error" /C:"ERROR" /C:"fatal" "%APPVEYOR_BUILD_FOLDER%\build.log" > "%APPVEYOR_BUILD_FOLDER%\errors.txt"
+        type "%APPVEYOR_BUILD_FOLDER%\errors.txt"
+        exit /b %BUILD_RC%
+
+    - name: Report errors as annotations
+      if: failure()
+      shell: cmd
+      run: |
+        if not exist "%APPVEYOR_BUILD_FOLDER%\errors.txt" exit /b 0
+        for /f "usebackq delims=" %%L in ("%APPVEYOR_BUILD_FOLDER%\errors.txt") do echo ::error::%%L
+
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log-${{ matrix.platform }}
+        path: build.log
+        if-no-files-found: warn
 
     - name: Collect outputs
+      if: success()
       shell: cmd
       run: |
         if not exist out mkdir out
@@ -68,6 +87,7 @@ jobs:
         dir out
 
     - name: Upload artifacts
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact }}
