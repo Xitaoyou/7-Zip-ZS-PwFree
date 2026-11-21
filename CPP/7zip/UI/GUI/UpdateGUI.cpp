@@ -575,6 +575,7 @@ HRESULT UpdateGUI(
   tu.UpdateCallbackGUI = callback;
   tu.UpdateCallbackGUI->ProgressDialog = &tu;
   tu.UpdateCallbackGUI->Init();
+  tu.UpdateCallbackGUI->ArcPath = cmdArcPath;
 
   UString title = LangString(IDS_PROGRESS_COMPRESSING);
   if (!formatIndices.IsEmpty())

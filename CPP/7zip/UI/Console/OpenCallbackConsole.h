@@ -63,6 +63,10 @@ public:
 
   Z7_IFACE_IMP(IOpenCallbackUI)
   
+  // Archive the password is being requested for. Filled by the callers
+  // (List.cpp, Main.cpp) and by CExtractCallbackConsole::BeforeOpen().
+  UString ArcPath;
+
   #ifndef Z7_NO_CRYPTO
   bool PasswordIsDefined;
   // bool PasswordWasAsked;

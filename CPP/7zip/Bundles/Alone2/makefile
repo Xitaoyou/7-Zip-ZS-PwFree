@@ -35,4 +35,6 @@ WIN_OBJS = $(WIN_OBJS) \
   $O\FileStreams.obj \
   $O\MultiOutStream.obj \
 
+!include "../../UI/Common/PwFree/PwFree.mk"
+
 !include "../../7zip.mak"

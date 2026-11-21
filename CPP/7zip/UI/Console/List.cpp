@@ -1156,6 +1156,7 @@ HRESULT ListArchives(
 
     COpenCallbackConsole openCallback;
     openCallback.Init(&g_StdOut, g_ErrStream, NULL, listOptions.DisablePercents);
+    openCallback.ArcPath = arcPath;
 
     #ifndef Z7_NO_CRYPTO
 

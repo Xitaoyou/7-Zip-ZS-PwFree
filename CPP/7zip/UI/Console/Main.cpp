@@ -1575,6 +1575,7 @@ int Main2(
 
     COpenCallbackConsole openCallback;
     openCallback.Init(g_StdStream, g_ErrStream, percentsStream, options.DisablePercents);
+    openCallback.ArcPath = options.ArchiveName;
 
     #ifndef Z7_NO_CRYPTO
     bool passwordIsDefined =

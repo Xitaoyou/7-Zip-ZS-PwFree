@@ -7,6 +7,7 @@ OBJS = \
   $(WIN_CTRL_OBJS) \
   $(7ZIP_COMMON_OBJS) \
   $(UI_COMMON_OBJS) \
+  $(PWFREE_OBJS) \
   $(AGENT_OBJS) \
   $(CONSOLE_OBJS) \
   $(EXPLORER_OBJS) \
@@ -240,6 +241,13 @@ $(FASTLZMA2_OBJS): ../../../../C/fast-lzma2/$(*B).c
 
 {../../UI/Common}.cpp{$O}.obj::
 	$(COMPLB)
+
+# PwFree is shared by targets with different precompiled headers,
+# so it is always built without one ($(COMPL_O1)).
+!IFDEF PWFREE_OBJS
+$(PWFREE_OBJS): ../../UI/Common/PwFree/$(*B).cpp
+	$(COMPL_O1)
+!ENDIF
 {../../UI/Agent}.cpp{$O}.obj::
 	$(COMPLB)
 {../../UI/Console}.cpp{$O}.obj::

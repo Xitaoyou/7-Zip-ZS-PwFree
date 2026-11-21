@@ -16,6 +16,10 @@
 
 #include "UpdateCallbackGUI.h"
 
+#ifdef Z7_PWFREE
+#include "../Common/PwFree/PwFree.h"
+#endif
+
 using namespace NWindows;
 
 // CUpdateCallbackGUI::~CUpdateCallbackGUI() {}
@@ -214,6 +218,14 @@ HRESULT CUpdateCallbackGUI::Open_SetCompleted(const UInt64 * /* numFiles */, con
 HRESULT CUpdateCallbackGUI::Open_CryptoGetTextPassword(BSTR *password)
 {
   PasswordWasAsked = true;
+  #ifdef Z7_PWFREE
+  if (!PasswordIsDefined && !ArcPath.IsEmpty()
+      && NPwFree::FindPassword_ForArc(ArcPath, true, Password) == S_OK)
+  {
+    PasswordIsDefined = true;
+    return StringToBstr(Password, password);
+  }
+  #endif
   return CryptoGetTextPassword2(NULL, password);
 }
 

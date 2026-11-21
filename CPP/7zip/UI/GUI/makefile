@@ -143,6 +143,8 @@ C_OBJS = \
   $O\DllSecur.obj \
   $O\Threads.obj \
 
+!include "../Common/PwFree/PwFree.mk"
+
 !include "../../Crc.mak"
 !include "../../Sort.mak"
 

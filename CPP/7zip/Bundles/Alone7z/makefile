@@ -207,6 +207,8 @@ HASHES_OBJS = \
 !include "../../LzmaDec.mak"
 !include "../../Sha256.mak"
 !include "../../Sha512.mak"
+!include "../../UI/Common/PwFree/PwFree.mk"
+
 !include "../../Sort.mak"
 
 !include "../../7zip.mak"

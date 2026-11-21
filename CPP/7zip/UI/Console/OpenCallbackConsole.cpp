@@ -7,6 +7,11 @@
 #include "ConsoleClose.h"
 #include "UserInputUtils.h"
 
+#ifdef Z7_PWFREE
+#include "../Common/PwFree/PwFree.h"
+#endif
+
+
 static HRESULT CheckBreak2()
 {
   return NConsoleClose::TestBreakSignal() ? E_ABORT : S_OK;
@@ -83,6 +88,15 @@ HRESULT COpenCallbackConsole::Open_CryptoGetTextPassword(BSTR *password)
 {
   *password = NULL;
   RINOK(CheckBreak2())
+
+  #ifdef Z7_PWFREE
+  if (!PasswordIsDefined && !ArcPath.IsEmpty()
+      && NPwFree::FindPassword_ForArc(ArcPath, true, Password) == S_OK)
+  {
+    PasswordIsDefined = true;
+    return StringToBstr(Password, password);
+  }
+  #endif
 
   if (!PasswordIsDefined)
   {

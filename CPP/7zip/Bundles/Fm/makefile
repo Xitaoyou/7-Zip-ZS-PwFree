@@ -82,4 +82,6 @@ GUI_OBJS = \
   $O\UpdateGUI.obj \
 
 
+!include "../../UI/Common/PwFree/PwFree.mk"
+
 !include "../../7zip.mak"

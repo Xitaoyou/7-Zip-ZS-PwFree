@@ -21,6 +21,8 @@ class CUpdateCallbackGUI Z7_final:
 public:
   bool AskPassword;
   FStringVector FailedFiles;
+  // Archive the password is being requested for; used by PwFree.
+  UString ArcPath;
 
   CUpdateCallbackGUI():
       AskPassword(false)

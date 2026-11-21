@@ -107,6 +107,8 @@ C_OBJS = $(C_OBJS) \
   $O\CpuArch.obj \
   $O\Threads.obj \
 
+!include "../Common/PwFree/PwFree.mk"
+
 !include "../../Sort.mak"
 !include "../../7zip.mak"
 

@@ -25,6 +25,11 @@
 
 #include "ExtractCallback.h"
 #include "FormatUtils.h"
+
+#ifdef Z7_PWFREE
+#include "../Common/PwFree/PwFree.h"
+#endif
+
 #include "LangUtils.h"
 #include "MemDialog.h"
 #include "OverwriteDialog.h"
@@ -685,6 +690,17 @@ Z7_COM7F_IMF(CExtractCallbackImp::CryptoGetTextPassword(BSTR *password))
   PasswordWasAsked = true;
   if (!PasswordIsDefined)
   {
+    #ifdef Z7_PWFREE
+    // _currentArchivePath is filled by BeforeOpen(), which the extract loop
+    // calls before the archive is opened.
+    if (!_currentArchivePath.IsEmpty()
+        && NPwFree::FindPassword_ForArc(_currentArchivePath, true, Password) == S_OK)
+    {
+      PasswordIsDefined = true;
+      return StringToBstr(Password, password);
+    }
+    #endif
+
     CPasswordDialog dialog;
     #ifndef Z7_SFX
     const bool showPassword = NExtract::Read_ShowPassword();

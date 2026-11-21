@@ -22,6 +22,10 @@
 #include "LangUtils.h"
 #include "RegistryUtils.h"
 #include "SettingsPage.h"
+
+#ifdef Z7_PWFREE
+#include "../Common/PwFree/PwFreeSettings.h"
+#endif
 #include "SettingsPageRes.h"
 
 #ifdef ZIP7_DARKMODE
@@ -153,6 +157,15 @@ bool CSettingsPage::OnInit()
   // CheckButton(IDX_SETTINGS_UNDERLINE, st.Underline);
 
   CheckButton(IDX_SETTINGS_SHOW_SYSTEM_MENU, st.ShowSystemMenu);
+
+  #ifdef Z7_PWFREE
+  {
+    const NPwFree::CSettings ps = NPwFree::GetSettings();
+    CheckButton(IDX_SETTINGS_PWFREE_ENABLE, ps.Enabled);
+    CheckButton(IDX_SETTINGS_PWFREE_CLOUD, ps.UseCloud);
+    EnableItem(IDX_SETTINGS_PWFREE_CLOUD, ps.Enabled);
+  }
+  #endif
   
   if (IsLargePageSupported())
     CheckButton(IDX_SETTINGS_LARGE_PAGES, ReadLockMemoryEnable());
@@ -335,6 +348,15 @@ LONG CSettingsPage::OnApply()
     st.ShowSystemMenu = IsButtonCheckedBool(IDX_SETTINGS_SHOW_SYSTEM_MENU);
 
     st.Save();
+
+    #ifdef Z7_PWFREE
+    {
+      NPwFree::CSettings ps = NPwFree::GetSettings();
+      ps.Enabled = IsButtonCheckedBool(IDX_SETTINGS_PWFREE_ENABLE);
+      ps.UseCloud = IsButtonCheckedBool(IDX_SETTINGS_PWFREE_CLOUD);
+      ps.Save();
+    }
+    #endif
     _wasChanged = false;
   }
 
@@ -539,6 +561,16 @@ bool CSettingsPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
     case IDX_SETTINGS_LOWERCASE_HASHES:
       _wasChanged = true;
       break;
+
+    #ifdef Z7_PWFREE
+    case IDX_SETTINGS_PWFREE_ENABLE:
+      _wasChanged = true;
+      EnableItem(IDX_SETTINGS_PWFREE_CLOUD, IsButtonCheckedBool(IDX_SETTINGS_PWFREE_ENABLE));
+      break;
+    case IDX_SETTINGS_PWFREE_CLOUD:
+      _wasChanged = true;
+      break;
+    #endif
 
     case IDX_SETTINGS_LARGE_PAGES:
       _largePages_wasChanged = true;

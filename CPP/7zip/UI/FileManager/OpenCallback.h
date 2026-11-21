@@ -27,6 +27,9 @@ public:
   bool PasswordIsDefined;
   bool PasswordWasAsked;
   UString Password;
+  // Archive the password is being requested for; used by the PwFree
+  // recovery chain. Empty when the caller did not know it.
+  UString ArcPath;
   HWND ParentWindow;
   CProgressDialog ProgressDialog;
 

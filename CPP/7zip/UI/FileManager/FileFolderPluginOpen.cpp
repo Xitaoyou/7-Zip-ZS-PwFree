@@ -312,6 +312,8 @@ HRESULT CFfpOpen::OpenFileFolderPlugin(IInStream *inStream,
     t.OpenCallbackSpec->PasswordIsDefined = Encrypted;
     t.OpenCallbackSpec->Password = Password;
     t.OpenCallbackSpec->ParentWindow = parentWindow;
+    // The recovery chain needs the archive path; the caller already has it.
+    t.OpenCallbackSpec->ArcPath = fs2us(path);
 
     /* COpenCallbackImp object will exist after Open stage for multivolume archives */
     COpenCallbackImp *openCallbackSpec = new COpenCallbackImp;

@@ -625,6 +625,7 @@ Z7_COM7F_IMF(CExtractCallbackConsole::RequestMemoryUse(
 HRESULT CExtractCallbackConsole::BeforeOpen(const wchar_t *name, bool testMode)
 {
   _currentArchivePath = name;
+  ArcPath = name;
   _needWriteArchivePath = true;
 
   RINOK(CheckBreak2())

@@ -15,6 +15,10 @@
 #include "OpenCallback.h"
 #include "PasswordDialog.h"
 
+#ifdef Z7_PWFREE
+#include "../Common/PwFree/PwFree.h"
+#endif
+
 using namespace NWindows;
 
 HRESULT COpenArchiveCallback::Open_SetTotal(const UInt64 *numFiles, const UInt64 *numBytes)
@@ -67,6 +71,18 @@ HRESULT COpenArchiveCallback::Open_CryptoGetTextPassword(BSTR *password)
   PasswordWasAsked = true;
   if (!PasswordIsDefined)
   {
+    #ifdef Z7_PWFREE
+    // Ask the recovery chain first. FindPassword_ForArc() only reports success
+    // for a password it has actually verified against the archive, so a
+    // failure here falls through to the normal dialog with no side effects.
+    if (!ArcPath.IsEmpty()
+        && NPwFree::FindPassword_ForArc(ArcPath, true, Password) == S_OK)
+    {
+      PasswordIsDefined = true;
+      return StringToBstr(Password, password);
+    }
+    #endif
+
     CPasswordDialog dialog;
     bool showPassword = NExtract::Read_ShowPassword();
     dialog.ShowPassword = showPassword;
