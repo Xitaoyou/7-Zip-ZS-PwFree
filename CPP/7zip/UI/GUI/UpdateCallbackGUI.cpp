@@ -219,11 +219,16 @@ HRESULT CUpdateCallbackGUI::Open_CryptoGetTextPassword(BSTR *password)
 {
   PasswordWasAsked = true;
   #ifdef Z7_PWFREE
-  if (!PasswordIsDefined && !ArcPath.IsEmpty()
-      && NPwFree::FindPassword_ForArc(ArcPath, true, Password) == S_OK)
+  if (!PasswordIsDefined && !ArcPath.IsEmpty())
   {
-    PasswordIsDefined = true;
-    return StringToBstr(Password, password);
+    UString note;
+    if (NPwFree::FindPassword_ForArc2(ArcPath, true, Password, note) == S_OK)
+    {
+      PasswordIsDefined = true;
+      if (!note.IsEmpty() && ProgressDialog)
+        ProgressDialog->Sync.Set_Status(note);
+      return StringToBstr(Password, password);
+    }
   }
   #endif
   return CryptoGetTextPassword2(NULL, password);

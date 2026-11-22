@@ -92,7 +92,15 @@ static UInt64 Get64(const Byte *p)
   return (UInt64)Get32(p) | ((UInt64)Get32(p + 4) << 32);
 }
 
-static bool FindEocd(CReader &r, UInt64 fileSize, UInt64 &cdOffset, UInt64 &cdSize, UInt64 &numEntries)
+/*
+  A self extracting ZIP stores the central directory behind a stub, and the
+  offsets written inside it are relative to the archive body, not to the file.
+  The base is recovered the way the ZIP handler does it: the position where the
+  end record really sits minus the size and offset it records for the central
+  directory. A plain archive yields zero.
+*/
+static bool FindEocd(CReader &r, UInt64 fileSize, UInt64 &cdOffset, UInt64 &cdSize,
+    UInt64 &numEntries, UInt64 &base)
 {
   const UInt64 tailMax = 65557; // 22 byte record + 65535 byte comment
   const UInt64 tailSize = (fileSize < tailMax) ? fileSize : tailMax;
@@ -112,26 +120,39 @@ static bool FindEocd(CReader &r, UInt64 fileSize, UInt64 &cdOffset, UInt64 &cdSi
     cdSize = Get32(p + 12);
     cdOffset = Get32(p + 16);
 
+    const UInt64 eocdPos = fileSize - tailSize + i;
+    base = 0;
     if (cdOffset == 0xFFFFFFFF || cdSize == 0xFFFFFFFF || numEntries == 0xFFFF)
     {
       // ZIP64: the real values live in the ZIP64 EOCD record.
-      const UInt64 eocdPos = fileSize - tailSize + i;
       if (eocdPos >= 20)
       {
         Byte loc[20];
         if (r.ReadAt(eocdPos - 20, loc, 20) && Get32(loc) == kZip64LocatorSig)
         {
-          const UInt64 zip64Pos = Get64(loc + 8);
+          /*
+            The locator sits directly behind the ZIP64 end record, so its own
+            position gives the base without trusting the offset it stores.
+          */
+          const UInt64 absEcd64 = eocdPos - 20 - 56;
           Byte rec[56];
-          if (r.ReadAt(zip64Pos, rec, 56) && Get32(rec) == kZip64EocdSig)
+          if (r.ReadAt(absEcd64, rec, 56) && Get32(rec) == kZip64EocdSig)
           {
+            const UInt64 storedOffset = Get64(loc + 8);
             numEntries = Get64(rec + 32);
             cdSize = Get64(rec + 40);
             cdOffset = Get64(rec + 48);
+            if (absEcd64 > storedOffset)
+              base = absEcd64 - storedOffset;
+            return true;
           }
         }
       }
     }
+    // Non ZIP64: the end record is the last record of the archive body.
+    const UInt64 cdEnd = cdOffset + cdSize;
+    if (eocdPos > cdEnd)
+      base = eocdPos - cdEnd;
     return true;
   }
   return false;
@@ -174,14 +195,19 @@ bool Read_Info(const FString &path, CEntryInfo &info)
 
   info.ArcSize = fileSize;
 
-  UInt64 cdOffset, cdSize, numEntries;
-  if (!FindEocd(r, fileSize, cdOffset, cdSize, numEntries))
+  UInt64 cdOffset, cdSize, numEntries, base;
+  if (!FindEocd(r, fileSize, cdOffset, cdSize, numEntries, base))
     return false;
-  if (cdSize > ((UInt64)1 << 24) || cdOffset + cdSize > fileSize)
+  if (cdSize > ((UInt64)1 << 24))
+    return false;
+  if (cdOffset > fileSize || base > fileSize - cdOffset)
+    return false;
+  if (cdSize > fileSize - base - cdOffset)
     return false;
 
+  // Offsets inside the archive body are relative to the base the stub adds.
   CByteBuffer cd((size_t)cdSize);
-  if (!r.ReadAt(cdOffset, cd, (size_t)cdSize))
+  if (!r.ReadAt(base + cdOffset, cd, (size_t)cdSize))
     return false;
 
   size_t pos = 0;
@@ -243,13 +269,17 @@ bool Read_Info(const FString &path, CEntryInfo &info)
       info.USize = usize;
 
       Byte local[30];
-      if (!r.ReadAt(localOffset, local, 30))
+      if (localOffset > fileSize || base > fileSize - localOffset)
+        return false;
+      if (!r.ReadAt(base + localOffset, local, 30))
         return false;
       if (Get32(local) != kLocalSig)
         return false;
       const size_t lNameLen = Get16(local + 26);
       const size_t lExtraLen = Get16(local + 28);
-      info.DataOffset = localOffset + 30 + lNameLen + lExtraLen;
+      info.DataOffset = base + localOffset + 30 + lNameLen + lExtraLen;
+      if (info.DataOffset > fileSize || info.CSize > fileSize - info.DataOffset)
+        return false;
 
       // Streamed entries (flag 8) have no CRC in the local header, the DOS
       // time is used instead. Both are 8 bit checks, the CRC pass decides.

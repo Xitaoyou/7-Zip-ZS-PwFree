@@ -63,7 +63,11 @@ struct CStreams
   CFolder Folders[16];
 };
 
-// True when the file starts with the 7z signature.
+/*
+  True when the file carries the 7z signature, either at offset zero or behind
+  a self extracting stub. A candidate start header has to pass its own CRC, so
+  random bytes inside an executable cannot pass for an archive.
+*/
 bool IsSevenZ(const FString &path);
 
 // Created once per archive; Check() may be called for every candidate.
@@ -72,11 +76,33 @@ class CProbe
   NWindows::NFile::NIO::CInFile _file;
   UInt64 _fileSize;
 
+  // Offset of the 7z signature inside the file. Zero for a plain archive; a
+  // self extracting stub in front of the archive moves it, and every offset
+  // the header stores is relative to it.
+  UInt64 _baseOffset;
+
   // 0 - nothing to probe, 1 - encrypted header, 2 - encrypted payload
   unsigned _mode;
 
   CStreams _streams;
   unsigned _folderIndex;
+
+  /*
+    A solid archive can hold several encrypted folders and only the one that
+    matches the file the user opens tells the password. The probe keeps a short
+    list of folders it can verify against and stops at the first candidate the
+    password satisfies.
+  */
+  struct CCandidate
+  {
+    unsigned FolderIndex;
+    Byte Iv[16];
+    Byte Salt[16];
+    unsigned SaltSize;
+    unsigned Power;
+  };
+  CCandidate _candidates[4];
+  unsigned _numCandidates;
 
   Byte _iv[16];
   Byte _salt[16];
@@ -110,6 +136,7 @@ class CProbe
   bool CheckPayload(const Byte *key, UInt64 packOffset, UInt64 packSize);
 
   bool SelectFolder();
+  void UseCandidate(unsigned index);
   bool Open_Header(const Byte *nextHeader, size_t nextHeaderSize);
   bool Open_EncodedHeader(const Byte *nextHeader, size_t nextHeaderSize);
 

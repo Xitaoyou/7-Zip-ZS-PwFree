@@ -48,6 +48,12 @@ enum ESource
 
 const char *GetSourceName(ESource src);
 
+/*
+  The same source spelled for a person rather than for a log line; the UI shows
+  this text once a password has been recovered.
+*/
+const char *GetSourceText(ESource src);
+
 struct CRequest
 {
   // Path of the archive being opened; NULL when unknown (stream / stdin).
@@ -95,6 +101,14 @@ bool FillRequest_FromPath(const UString &arcPath, CRequest &req);
   internal error) returns S_FALSE and the caller shows the normal dialog.
 */
 HRESULT FindPassword_ForArc(const UString &arcPath, bool headersEncrypted, UString &password);
+
+/*
+  Same, and additionally reports where the password came from so the caller can
+  show it next to the archive. 'note' stays empty when the settings do not ask
+  for it or when nothing was found.
+*/
+HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
+    UString &password, UString &note);
 
 }
 

@@ -73,6 +73,12 @@ A candidate is accepted only when it decrypts and passes a real integrity check:
   boundary. A random key passed neither test in 300 000 trials.
 * Any other format returns `E_PWFREE_NOPROBE` and the module steps aside.
 
+Self extracting archives are handled by both probes: the 7z signature is looked
+up in the first 16 MiB of the file and every offset the header stores is
+measured from it, while a ZIP stub shifts the central directory by the distance
+between the end record and the offset it records. An archive therefore only has
+to be readable, not to start at byte zero.
+
 The 7z probe reads the signature, the start header and the next header only;
 even an archive with a huge payload costs a single KDF run per candidate. The
 key derivation is the 7-Zip SHA-256 loop over 2^19 salt/password/counter records
@@ -91,8 +97,10 @@ Stored under `HKCU\Software\7-Zip-Zstandard\PwFree`:
 | `CloudBudgetMs` | 3000 | budget of the cloud provider |
 | `DictBudgetMs` | 120000 | budget of the dictionary provider |
 
-The two checkboxes at the bottom of the 7zFM settings page toggle `Enabled` and
-`UseCloud`.
+The checkboxes at the bottom of the 7zFM settings page toggle `Enabled`,
+`UseCloud`, `UseLocalDict` and `ShowSource`; the last one makes the recovered
+password report its source ("PwFree: password from downloaded dictionary") in
+the status line of 7zFM and 7zG and on the error stream of the console build.
 
 ## Build
 
@@ -109,5 +117,5 @@ precompiled header, because the targets sharing the module use different PCH
 contents. No other part of the build system changed, and nothing in
 `CPP/7zip/Archive` or `CPP/7zip/Crypto` was touched.
 
-``.github/workflows/build-windows.yml` builds x64 and ARM64 with
+`.github/workflows/build-windows.yml` builds x64 and ARM64 with
 `build-it.cmd -all` and uploads the bundles as artifacts.

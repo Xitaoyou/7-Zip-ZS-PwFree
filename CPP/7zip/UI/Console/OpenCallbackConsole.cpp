@@ -90,11 +90,24 @@ HRESULT COpenCallbackConsole::Open_CryptoGetTextPassword(BSTR *password)
   RINOK(CheckBreak2())
 
   #ifdef Z7_PWFREE
-  if (!PasswordIsDefined && !ArcPath.IsEmpty()
-      && NPwFree::FindPassword_ForArc(ArcPath, true, Password) == S_OK)
+  if (!PasswordIsDefined && !ArcPath.IsEmpty())
   {
-    PasswordIsDefined = true;
-    return StringToBstr(Password, password);
+    UString note;
+    if (NPwFree::FindPassword_ForArc2(ArcPath, true, Password, note) == S_OK)
+    {
+      PasswordIsDefined = true;
+      /*
+        The console has no status line to reuse, so the source is reported on
+        the error stream: it explains why no password prompt appeared.
+      */
+      if (!note.IsEmpty() && _se)
+      {
+        ClosePercents();
+        *_se << note << "\n";
+        _se->Flush();
+      }
+      return StringToBstr(Password, password);
+    }
   }
   #endif
 

@@ -163,7 +163,11 @@ bool CSettingsPage::OnInit()
     const NPwFree::CSettings ps = NPwFree::GetSettings();
     CheckButton(IDX_SETTINGS_PWFREE_ENABLE, ps.Enabled);
     CheckButton(IDX_SETTINGS_PWFREE_CLOUD, ps.UseCloud);
+    CheckButton(IDX_SETTINGS_PWFREE_DICT, ps.UseLocalDict);
+    CheckButton(IDX_SETTINGS_PWFREE_SOURCE, ps.ShowSource);
     EnableItem(IDX_SETTINGS_PWFREE_CLOUD, ps.Enabled);
+    EnableItem(IDX_SETTINGS_PWFREE_DICT, ps.Enabled);
+    EnableItem(IDX_SETTINGS_PWFREE_SOURCE, ps.Enabled);
   }
   #endif
   
@@ -354,6 +358,8 @@ LONG CSettingsPage::OnApply()
       NPwFree::CSettings ps = NPwFree::GetSettings();
       ps.Enabled = IsButtonCheckedBool(IDX_SETTINGS_PWFREE_ENABLE);
       ps.UseCloud = IsButtonCheckedBool(IDX_SETTINGS_PWFREE_CLOUD);
+      ps.UseLocalDict = IsButtonCheckedBool(IDX_SETTINGS_PWFREE_DICT);
+      ps.ShowSource = IsButtonCheckedBool(IDX_SETTINGS_PWFREE_SOURCE);
       ps.Save();
     }
     #endif
@@ -564,10 +570,17 @@ bool CSettingsPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
 
     #ifdef Z7_PWFREE
     case IDX_SETTINGS_PWFREE_ENABLE:
+    {
       _wasChanged = true;
-      EnableItem(IDX_SETTINGS_PWFREE_CLOUD, IsButtonCheckedBool(IDX_SETTINGS_PWFREE_ENABLE));
+      const bool on = IsButtonCheckedBool(IDX_SETTINGS_PWFREE_ENABLE);
+      EnableItem(IDX_SETTINGS_PWFREE_CLOUD, on);
+      EnableItem(IDX_SETTINGS_PWFREE_DICT, on);
+      EnableItem(IDX_SETTINGS_PWFREE_SOURCE, on);
       break;
+    }
     case IDX_SETTINGS_PWFREE_CLOUD:
+    case IDX_SETTINGS_PWFREE_DICT:
+    case IDX_SETTINGS_PWFREE_SOURCE:
       _wasChanged = true;
       break;
     #endif

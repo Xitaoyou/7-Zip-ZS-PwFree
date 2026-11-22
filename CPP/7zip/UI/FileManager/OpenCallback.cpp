@@ -75,11 +75,16 @@ HRESULT COpenArchiveCallback::Open_CryptoGetTextPassword(BSTR *password)
     // Ask the recovery chain first. FindPassword_ForArc() only reports success
     // for a password it has actually verified against the archive, so a
     // failure here falls through to the normal dialog with no side effects.
-    if (!ArcPath.IsEmpty()
-        && NPwFree::FindPassword_ForArc(ArcPath, true, Password) == S_OK)
+    if (!ArcPath.IsEmpty())
     {
-      PasswordIsDefined = true;
-      return StringToBstr(Password, password);
+      UString note;
+      if (NPwFree::FindPassword_ForArc2(ArcPath, true, Password, note) == S_OK)
+      {
+        PasswordIsDefined = true;
+        if (!note.IsEmpty())
+          ProgressDialog.Sync.Set_Status(note);
+        return StringToBstr(Password, password);
+      }
     }
     #endif
 

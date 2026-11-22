@@ -53,6 +53,21 @@ const char *GetSourceName(ESource src)
   }
 }
 
+const char *GetSourceText(ESource src)
+{
+  switch (src)
+  {
+    case kSrcSeed:  return "known password";
+    case kSrcCache: return "earlier lookup";
+    case kSrcBook:  return "built-in list";
+    case kSrcDict:  return "downloaded dictionary";
+    case kSrcCloud: return "password database";
+    case kSrcMask:  return "mask search";
+    case kSrcNone:
+    default:        return "unknown source";
+  }
+}
+
 bool FillRequest_FromPath(const UString &arcPath, CRequest &req)
 {
   req.Size = 0;
@@ -147,6 +162,14 @@ HRESULT Resolve(const CRequest &req, CAnswer &ans)
 
 HRESULT FindPassword_ForArc(const UString &arcPath, bool headersEncrypted, UString &password)
 {
+  UString note;
+  return FindPassword_ForArc2(arcPath, headersEncrypted, password, note);
+}
+
+HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
+    UString &password, UString &note)
+{
+  note.Empty();
   if (!IsEnabled())
     return S_FALSE;
 
@@ -167,6 +190,41 @@ HRESULT FindPassword_ForArc(const UString &arcPath, bool headersEncrypted, UStri
     if (res == S_OK && !ans.Password.IsEmpty())
     {
       password = ans.Password;
+      /*
+        The source line answers "why does 7-Zip already know the password", so
+        it is only built when the user asked for it.
+      */
+      if (GetSettings().ShowSource)
+      {
+        note = L"PwFree: password from ";
+        const char *text = GetSourceText(ans.Source);
+        for (; *text != 0; text++)
+          note += (wchar_t)(unsigned char)*text;
+        /*
+          The provider name repeats the source for the local providers, so it is
+          only worth showing when it adds a distinct name (a cloud service).
+        */
+        const char *raw = GetSourceName(ans.Source);
+        const char *prov = ans.ProviderName.Ptr();
+        bool same = true;
+        for (unsigned i = 0;; i++)
+        {
+          if (raw[i] != prov[i])
+          {
+            same = false;
+            break;
+          }
+          if (raw[i] == 0)
+            break;
+        }
+        if (!same && prov[0] != 0)
+        {
+          note += L" (";
+          for (; *prov != 0; prov++)
+            note += (wchar_t)(unsigned char)*prov;
+          note += L")";
+        }
+      }
       ans.Clear();
       return S_OK;
     }

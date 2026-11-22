@@ -693,11 +693,16 @@ Z7_COM7F_IMF(CExtractCallbackImp::CryptoGetTextPassword(BSTR *password))
     #ifdef Z7_PWFREE
     // _currentArchivePath is filled by BeforeOpen(), which the extract loop
     // calls before the archive is opened.
-    if (!_currentArchivePath.IsEmpty()
-        && NPwFree::FindPassword_ForArc(_currentArchivePath, true, Password) == S_OK)
+    if (!_currentArchivePath.IsEmpty())
     {
-      PasswordIsDefined = true;
-      return StringToBstr(Password, password);
+      UString note;
+      if (NPwFree::FindPassword_ForArc2(_currentArchivePath, true, Password, note) == S_OK)
+      {
+        PasswordIsDefined = true;
+        if (!note.IsEmpty() && ProgressDialog)
+          ProgressDialog->Sync.Set_Status(note);
+        return StringToBstr(Password, password);
+      }
     }
     #endif
 

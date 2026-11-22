@@ -42,6 +42,8 @@ const unsigned kId_EncodedHeader = 23;
 
 // A real archive stays far below these; the caps keep a damaged or hostile
 // file from asking for a huge read or allocation.
+const size_t kHeaderSize = 32;
+
 const size_t kMaxNextHeaderSize = (size_t)1 << 20;
 const size_t kMaxProbeData = (size_t)32 << 20;
 const size_t kMaxPayloadDecode = (size_t)1 << 20;
@@ -563,6 +565,99 @@ bool DecodeLzma2(const Byte *src, size_t srcSize, unsigned prop,
   return res == SZ_OK && destLen == destSize;
 }
 
+UInt32 Get32(const Byte *p)
+{
+  return (UInt32)p[0] | ((UInt32)p[1] << 8) | ((UInt32)p[2] << 16) | ((UInt32)p[3] << 24);
+}
+
+/*
+  The first thirty two bytes of a 7z stream. The CRC covers the twenty bytes
+  behind it, so a candidate can be told from six signature bytes that happen
+  to sit inside an executable.
+*/
+bool CheckStartHeader(const Byte *start)
+{
+  for (unsigned i = 0; i < kSignatureSize; i++)
+    if (start[i] != kSignature[i])
+      return false;
+  if (start[6] != 0)
+    return false;
+  return NPwCrypto::Crc32_Calc(start + 12, 20) == Get32(start + 8);
+}
+
+// A self extracting stub is normally far smaller; the cap keeps a scan over a
+// crafted file bounded.
+const UInt64 kMaxStubSize = (UInt64)16 << 20;
+
+bool ReadAt_File(NFile::NIO::CInFile &file, UInt64 fileSize, UInt64 offset,
+    void *data, size_t size)
+{
+  if (size == 0)
+    return true;
+  if (offset > fileSize || size > fileSize - offset)
+    return false;
+  UInt64 newPos;
+  if (!file.Seek(offset, newPos))
+    return false;
+  Byte *p = (Byte *)data;
+  size_t done = 0;
+  while (done < size)
+  {
+    UInt32 processed = 0;
+    const size_t left = size - done;
+    const size_t todo = (left > ((size_t)1 << 20)) ? ((size_t)1 << 20) : left;
+    if (!file.ReadPart(p + done, (UInt32)todo, processed))
+      return false;
+    if (processed == 0)
+      return false;
+    done += processed;
+  }
+  return true;
+}
+
+/*
+  Returns the offset of the 7z start header, (UInt64)(Int64)-1 when the file
+  holds none. A plain archive answers zero after a single read; inside a self
+  extracting executable the signature is searched for the way the 7z handler
+  does it. Every candidate has to pass the start header CRC.
+*/
+UInt64 FindStartHeader(NFile::NIO::CInFile &file, UInt64 fileSize, Byte *start)
+{
+  if (fileSize < kHeaderSize)
+    return (UInt64)(Int64)-1;
+  if (!ReadAt_File(file, fileSize, 0, start, kHeaderSize))
+    return (UInt64)(Int64)-1;
+  if (CheckStartHeader(start))
+    return 0;
+
+  const UInt64 limit = (fileSize < kMaxStubSize) ? fileSize : kMaxStubSize;
+  const size_t kChunk = (size_t)1 << 16;
+  CByteBuffer buf;
+  buf.Alloc(kChunk + kHeaderSize);
+  for (UInt64 pos = kHeaderSize; pos + kHeaderSize <= limit; )
+  {
+    const UInt64 left = limit - pos;
+    const size_t want = (left < kChunk + kHeaderSize)
+        ? (size_t)left : (kChunk + kHeaderSize);
+    if (!ReadAt_File(file, fileSize, pos, buf, want))
+      return (UInt64)(Int64)-1;
+    for (size_t i = 0; i + kHeaderSize <= want; i++)
+    {
+      const Byte *p = buf.ConstData() + i;
+      if (p[0] != kSignature[0])
+        continue;
+      if (!CheckStartHeader(p))
+        continue;
+      memcpy(start, p, kHeaderSize);
+      return pos + i;
+    }
+    if (want < kChunk + kHeaderSize)
+      break;
+    pos += kChunk;
+  }
+  return (UInt64)(Int64)-1;
+}
+
 } // namespace
 
 CProbe::CProbe():
@@ -573,8 +668,10 @@ CProbe::CProbe():
     _numCyclesPower(0),
     _headerCrc(0),
     _blockPos(0),
-    _blockValid(false)
+    _blockValid(false),
+    _numCandidates(0)
 {
+  memset(_candidates, 0, sizeof(_candidates));
   memset(_iv, 0, sizeof(_iv));
   memset(_salt, 0, sizeof(_salt));
   memset(_block, 0, sizeof(_block));
@@ -591,16 +688,11 @@ bool IsSevenZ(const FString &path)
   NWindows::NFile::NIO::CInFile file;
   if (!file.Open(path))
     return false;
-  Byte buf[kSignatureSize];
-  UInt32 processed = 0;
-  if (!file.ReadPart(buf, kSignatureSize, processed))
+  UInt64 fileSize = 0;
+  if (!file.GetLength(fileSize))
     return false;
-  if (processed != kSignatureSize)
-    return false;
-  for (unsigned i = 0; i < kSignatureSize; i++)
-    if (buf[i] != kSignature[i])
-      return false;
-  return true;
+  Byte start[kHeaderSize];
+  return FindStartHeader(file, fileSize, start) != (UInt64)(Int64)-1;
 }
 
 bool CProbe::ReadAt(UInt64 offset, void *data, size_t size)
@@ -713,7 +805,9 @@ bool CProbe::PackRange(unsigned folderIndex, UInt64 &offset, UInt64 &size) const
   if (packIndex >= kMaxPackStreams || packIndex >= _streams.NumPackStreams)
     return false;
 
-  UInt64 packOffset = 32 + _streams.PackPos;
+  // The header stores positions relative to the start header, which itself can
+  // sit behind a self extracting stub.
+  UInt64 packOffset = _baseOffset + kHeaderSize + _streams.PackPos;
   for (UInt64 i = 0; i < packIndex; i++)
     packOffset += _streams.PackSizes[i];
   offset = packOffset;
@@ -943,15 +1037,17 @@ bool CProbe::CheckPayload(const Byte *key, UInt64 packOffset, UInt64 packSize)
 }
 
 /*
-  Picks the first folder that starts with an AES coder and reads its
-  properties. Returns false when no folder can be probed.
+  Collects the encrypted folders a probe can verify against. A solid archive
+  stores one folder per block, so a wrong first pick would reject the correct
+  password; the candidates are tried in turn and the first match decides.
 */
 bool CProbe::SelectFolder()
 {
+  _numCandidates = 0;
   for (unsigned i = 0; i < _streams.NumFolders; i++)
   {
     const CFolder &folder = _streams.Folders[i];
-    if (folder.NumCoders == 0)
+    if (folder.NumCoders == 0 || folder.NumCoders > kMaxCoders)
       continue;
     const CCoder &coder = folder.Coders[0];
     if (coder.Id != k_Aes)
@@ -969,16 +1065,37 @@ bool CProbe::SelectFolder()
     if (coder.PropsSize != 2 + saltSize + ivSize)
       continue;
 
-    _saltSize = saltSize;
-    _numCyclesPower = power;
+    // Leave room for the folder that is currently selected.
+    if (_numCandidates >= 4)
+      break;
+
+    CCandidate &c = _candidates[_numCandidates++];
+    c.FolderIndex = i;
+    c.SaltSize = saltSize;
+    c.Power = power;
+    memset(c.Salt, 0, sizeof(c.Salt));
     if (saltSize != 0)
-      memcpy(_salt, coder.Props + 2, saltSize);
-    memcpy(_iv, coder.Props + 2 + saltSize, 16);
-    _folderIndex = i;
-    _blockValid = false;
-    return true;
+      memcpy(c.Salt, coder.Props + 2, saltSize);
+    memcpy(c.Iv, coder.Props + 2 + saltSize, 16);
   }
-  return false;
+  if (_numCandidates == 0)
+    return false;
+
+  UseCandidate(0);
+  return true;
+}
+
+void CProbe::UseCandidate(unsigned index)
+{
+  const CCandidate &c = _candidates[index];
+  _folderIndex = c.FolderIndex;
+  _saltSize = c.SaltSize;
+  _numCyclesPower = c.Power;
+  memcpy(_iv, c.Iv, 16);
+  memset(_salt, 0, sizeof(_salt));
+  if (c.SaltSize != 0)
+    memcpy(_salt, c.Salt, c.SaltSize);
+  _blockValid = false;
 }
 
 bool CProbe::Open_Header(const Byte *nextHeader, size_t nextHeaderSize)
@@ -1053,16 +1170,17 @@ bool CProbe::Open(const FString &path)
     return false;
   if (!_file.GetLength(_fileSize))
     return false;
-  if (_fileSize < 32)
+  if (_fileSize < kHeaderSize)
     return false;
 
-  Byte start[32];
-  if (!ReadAt(0, start, 32))
-    return false;
-  for (unsigned i = 0; i < kSignatureSize; i++)
-    if (start[i] != kSignature[i])
-      return false;
-  if (start[6] != 0)
+  /*
+    A self extracting archive carries the stub in front of the start header, so
+    the signature is searched for and everything below is offset by its
+    position. Both the stub scan and the plain case end in the same CRC test.
+  */
+  Byte start[kHeaderSize];
+  _baseOffset = FindStartHeader(_file, _fileSize, start);
+  if (_baseOffset == (UInt64)(Int64)-1)
     return false;
 
   const UInt64 nextOffset = (UInt64)start[12] | ((UInt64)start[13] << 8)
@@ -1090,7 +1208,7 @@ bool CProbe::Open(const FString &path)
 
   CByteBuffer buf;
   buf.Alloc((size_t)nextSize);
-  if (!ReadAt(32 + nextOffset, buf, (size_t)nextSize))
+  if (!ReadAt(_baseOffset + kHeaderSize + nextOffset, buf, (size_t)nextSize))
     return false;
 
   /*
@@ -1140,11 +1258,18 @@ bool CProbe::Check(const Byte *password, size_t size)
   if (!keyOk)
     return false;
 
-  UInt64 packOffset = 0;
-  UInt64 packSize = 0;
+  /*
+    A wrong pick among several encrypted folders would reject the right
+    password, so every candidate is tried until one confirms it.
+  */
   bool result = false;
-  if (PackRange(_folderIndex, packOffset, packSize))
+  for (unsigned i = 0; i < _numCandidates && !result; i++)
   {
+    UseCandidate(i);
+    UInt64 packOffset = 0;
+    UInt64 packSize = 0;
+    if (!PackRange(_folderIndex, packOffset, packSize))
+      continue;
     _blockValid = false;
     try
     {
@@ -1157,6 +1282,8 @@ bool CProbe::Check(const Byte *password, size_t size)
       result = false;
     }
   }
+  if (!result && _numCandidates != 0)
+    UseCandidate(0);
   NPwCrypto::SecureZero(key, sizeof(key));
   return result;
 }

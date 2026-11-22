@@ -37,8 +37,10 @@ BEGIN
   MY_CONTROL_CHECKBOX ( "Want FolderHistory", IDX_SETTINGS_WANT_FOLDER_HISTORY,     m, 208, xc)
   MY_CONTROL_CHECKBOX ( "Use Lowercase Hashes", IDX_SETTINGS_LOWERCASE_HASHES,      m, 220, xc)
 
-  MY_CONTROL_CHECKBOX ( "Try to find archive password automatically", IDX_SETTINGS_PWFREE_ENABLE, m, 236, xc)
-  MY_CONTROL_CHECKBOX ( "   ... allow cloud password database",       IDX_SETTINGS_PWFREE_CLOUD,  m + 10, 248, xc - 10)
+  MY_CONTROL_CHECKBOX ( "Try to find archive password automatically", IDX_SETTINGS_PWFREE_ENABLE, m, 232, xc)
+  MY_CONTROL_CHECKBOX ( "   ... allow cloud password database",       IDX_SETTINGS_PWFREE_CLOUD,  m + 10, 244, xc - 10)
+  MY_CONTROL_CHECKBOX ( "   ... allow downloaded dictionary",         IDX_SETTINGS_PWFREE_DICT,   m + 10, 256, xc - 10)
+  MY_CONTROL_CHECKBOX ( "   ... report where the password came from", IDX_SETTINGS_PWFREE_SOURCE, m + 10, 268, xc - 10)
 
 #ifdef ZIP7_DARKMODE
   LTEXT "Color Mode:", IDT_COLOR_MODE, m, save_y + 22 + 76, xc, 8
