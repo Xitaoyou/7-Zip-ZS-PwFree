@@ -51,6 +51,7 @@ IProvider *CreateSeedProvider(const CRequest &req);
 IProvider *CreateCacheProvider(const CRequest &req);
 IProvider *CreateDictProvider(const CRequest &req);
 IProvider *CreateCloudProvider(const CRequest &req);
+IProvider *CreateMaskProvider(const CRequest &req);
 
 /*
   Runs the providers in cost order against 'verify'.

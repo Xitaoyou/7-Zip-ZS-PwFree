@@ -24,7 +24,10 @@ struct CSettings
   // Tell the user where the password came from after a successful lookup.
   bool ShowSource;
 
-  // Per-provider budgets. A provider that runs out is skipped, not failed.
+  /*
+    Per-provider budgets. A provider that runs out is skipped, not failed.
+    MaskBudgetMs is zero by default, which keeps the digits walk off entirely.
+  */
   UInt32 CloudBudgetMs;
   UInt32 DictBudgetMs;
   UInt32 MaskBudgetMs;

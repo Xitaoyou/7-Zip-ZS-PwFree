@@ -164,6 +164,67 @@ public:
 
 /* ---------------- cloud ---------------- */
 
+/* ---------------- mask ---------------- */
+
+/*
+  Digits only, four to eight characters. Longer candidates are dominated by the
+  dictionary: a six digit password appears in a leaked list far more often than
+  a random eight digit one, so short lengths are exhausted first and the budget
+  decides how far the walk gets. The provider holds no state beyond an odometer,
+  so it stops exactly where the budget cuts it off.
+*/
+class CMaskProvider Z7_final: public IProvider
+{
+  static const unsigned kMinLen = 4;
+  static const unsigned kMaxLen = 8;
+  static const unsigned kBase = 10;
+
+  Byte _digits[kMaxLen];
+  unsigned _len;
+  bool _done;
+
+  void Reset(unsigned len)
+  {
+    _len = len;
+    memset(_digits, 0, sizeof(_digits));
+  }
+
+  // Advances the odometer, growing the length once the last one overflows.
+  void Advance()
+  {
+    for (int i = (int)_len - 1; i >= 0; i--)
+    {
+      if (++_digits[i] < kBase)
+        return;
+      _digits[i] = 0;
+    }
+    if (_len >= kMaxLen)
+      _done = true;
+    else
+      Reset(_len + 1);
+  }
+
+public:
+  explicit CMaskProvider(const CRequest &): _len(0), _done(false) { Reset(kMinLen); }
+
+  const char *Name() const { return "mask"; }
+
+  UInt32 BudgetMs() const { return GetSettings().MaskBudgetMs; }
+
+  HRESULT Next(UString &password)
+  {
+    if (_done)
+      return S_FALSE;
+    password.Empty();
+    for (unsigned i = 0; i < _len; i++)
+      password += (wchar_t)(L'0' + _digits[i]);
+    Advance();
+    return S_OK;
+  }
+};
+
+/* ---------------- cloud ---------------- */
+
 class CCloudProvider Z7_final: public IProvider
 {
   CCloudLookup _lookup;
@@ -197,6 +258,7 @@ IProvider *CreateSeedProvider(const CRequest &req) { return new CSeedProvider(re
 IProvider *CreateCacheProvider(const CRequest &req) { return new CCacheProvider(req); }
 IProvider *CreateDictProvider(const CRequest &req) { return new CDictProvider(req); }
 IProvider *CreateCloudProvider(const CRequest &req) { return new CCloudProvider(req); }
+IProvider *CreateMaskProvider(const CRequest &req) { return new CMaskProvider(req); }
 
 HRESULT RunChain(const CRequest &req, IVerify &verify, UString &password,
     AString &providerName, unsigned &elapsedMs, volatile long *cancel)
@@ -215,6 +277,12 @@ HRESULT RunChain(const CRequest &req, IVerify &verify, UString &password,
     providers.Add(CreateDictProvider(req));
   if (st.UseCloud && req.ArcPath)
     providers.Add(CreateCloudProvider(req));
+  /*
+    The mask walk is the slowest provider, so it runs last: every cheaper source
+    has already had its turn before the CPU is spent.
+  */
+  if (st.MaskBudgetMs != 0)
+    providers.Add(CreateMaskProvider(req));
 
   HRESULT result = S_FALSE;
   unsigned counter = 0;

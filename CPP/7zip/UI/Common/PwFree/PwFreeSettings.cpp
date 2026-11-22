@@ -27,7 +27,10 @@ CSettings::CSettings():
     ShowSource(true),
     CloudBudgetMs(3000),
     DictBudgetMs(120000),
-    MaskBudgetMs(60000)
+    // Off by default: a digits walk is only worth its time on a short numeric
+    // password, and it would otherwise run for a minute on every archive the
+    // other providers fail to open.
+    MaskBudgetMs(0)
 {
 }
 

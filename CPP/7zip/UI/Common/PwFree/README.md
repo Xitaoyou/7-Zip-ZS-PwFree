@@ -48,6 +48,10 @@ and no provider can forget to yield.
    answer is treated as a candidate list, never as an answer: a password taken
    from the network has to pass the same local verification as one from the
    dictionary.
+5. **mask** - a digits only walk from four to eight characters, last because it
+   costs CPU rather than a request. It is off by default (`MaskBudgetMs` is
+   zero): on an archive nothing else opens, a minute of hashing is rarely what
+   the user wants. Set `MaskBudgetMs` to a number of milliseconds to enable it.
 
 Each provider has a budget (3 s for the cloud lookup, 120 s for the dictionaries
 by default, both configurable) and the loop aborts as soon as one candidate
@@ -96,6 +100,7 @@ Stored under `HKCU\Software\7-Zip-Zstandard\PwFree`:
 | `ShowSource` | 1 | report where a password came from |
 | `CloudBudgetMs` | 3000 | budget of the cloud provider |
 | `DictBudgetMs` | 120000 | budget of the dictionary provider |
+| `MaskBudgetMs` | 0 | budget of the digits walk; 0 keeps it off |
 
 The checkboxes at the bottom of the 7zFM settings page toggle `Enabled`,
 `UseCloud`, `UseLocalDict` and `ShowSource`; the last one makes the recovered
