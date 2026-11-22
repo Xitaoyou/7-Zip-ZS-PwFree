@@ -376,10 +376,13 @@ bool Unzip_FirstEntry(const Byte *zipData, size_t zipSize, CByteBuffer &out)
   // Streamed entries (flag bit 3) carry neither size in the local header; the
   // vendor dictionaries are written that way, so the sizes are unknown and the
   // decoder has to grow its output buffer.
+  // The rest of the entry has to fit the buffer, so the arithmetic stays in
+  // UInt64 and only the final size is narrowed (this file also builds as x86).
+  const UInt64 avail = (UInt64)zipSize - offset;
   if (method == 8 && (csize == 0 || usize == 0))
-    return Inflate_Raw_Grow(src, zipSize - offset, out);
+    return Inflate_Raw_Grow(src, (size_t)avail, out);
 
-  if (csize > zipSize - offset)
+  if (csize > avail)
     return false;
 
   if (method == 0)
