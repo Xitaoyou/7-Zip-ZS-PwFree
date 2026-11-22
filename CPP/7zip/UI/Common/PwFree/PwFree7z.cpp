@@ -1093,6 +1093,15 @@ bool CProbe::Open(const FString &path)
   if (!ReadAt(32 + nextOffset, buf, (size_t)nextSize))
     return false;
 
+  /*
+    The start header also stores a CRC of the next header as it sits on disk, so
+    a truncated or edited file is rejected here instead of failing later with a
+    confusing result. The digest covers the encoded bytes, not the plain header
+    that the probe recovers from them.
+  */
+  if (NPwCrypto::Crc32_Calc(buf, (size_t)nextSize) != _headerCrc)
+    return false;
+
   const Byte *p = buf;
   if (p[0] == kId_Header)
     return Open_Header(p, (size_t)nextSize);
