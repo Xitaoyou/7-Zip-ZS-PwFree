@@ -2,6 +2,7 @@
 
 #include "PwFreeVerify.h"
 
+#include "PwFree7z.h"
 #include "PwFreeZip.h"
 
 namespace NPwFree {
@@ -68,6 +69,32 @@ public:
   }
 };
 
+class CSevenZVerifier Z7_final: public IVerify
+{
+  FString _path;
+  NPwSevenZ::CProbe _probe;
+  bool _ok;
+
+public:
+  CSevenZVerifier(const FString &path): _path(path), _ok(false)
+  {
+    _ok = _probe.Open(_path);
+  }
+
+  bool Available() const { return _ok; }
+
+  unsigned CostClass() const { return 1; }
+
+  const char *Name() const { return _probe.ModeName(); }
+
+  bool Check(const Byte *password, size_t size)
+  {
+    if (!_ok)
+      return false;
+    return _probe.Check(password, size);
+  }
+};
+
 }
 
 IVerify *CreateVerifier(const FString &arcPath, UInt32 formatIndex)
@@ -81,6 +108,15 @@ IVerify *CreateVerifier(const FString &arcPath, UInt32 formatIndex)
       if (info.IsWinZipAes)
         return new CWzAesVerifier(arcPath);
       return new CZipCryptoVerifier(arcPath);
+    }
+
+    // 7z: the probe reports by itself whether the archive can be checked.
+    if (NPwSevenZ::IsSevenZ(arcPath))
+    {
+      CSevenZVerifier *verifier = new CSevenZVerifier(arcPath);
+      if (verifier->Available())
+        return verifier;
+      delete verifier;
     }
   }
   catch (...)

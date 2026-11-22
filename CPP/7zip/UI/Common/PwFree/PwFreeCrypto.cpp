@@ -293,6 +293,81 @@ bool Des_Ecb_Decrypt(const Byte *key8, Byte *data, size_t size)
 #endif
 }
 
+/* ---------------- SHA-256 ---------------- */
+
+bool Sha256_Calc(const void *data, size_t size, Byte *digest)
+{
+#ifdef _WIN32
+  return Hash_Calc(BCRYPT_SHA256_ALGORITHM, 0, NULL, 0, data, size, digest, 32);
+#else
+  UNUSED_VAR(data)
+  UNUSED_VAR(size)
+  UNUSED_VAR(digest)
+  return false;
+#endif
+}
+
+bool Sha256_Kdf7z(const Byte *saltPassword, size_t size,
+    unsigned numCyclesPower, Byte *key)
+{
+#ifdef _WIN32
+  /*
+    The loop hashes 2^power buffers that differ only in their last eight bytes,
+    so they are prepared in blocks and handed to one hash stream. The block is
+    small enough to stay in cache and large enough to keep the hash busy.
+  */
+  const unsigned kUnroll = 32;
+  const size_t itemSize = size + 8;
+  if (numCyclesPower > 24 || itemSize > ((size_t)1 << 16))
+    return false;
+
+  CByteBuffer buf;
+  buf.Alloc(itemSize * kUnroll);
+  Byte *p = buf;
+  for (unsigned i = 0; i < kUnroll; i++)
+  {
+    memcpy(p + i * itemSize, saltPassword, size);
+    memset(p + i * itemSize + size, 0, 8);
+  }
+
+  CAlgProvider prov;
+  if (!prov.Open(BCRYPT_SHA256_ALGORITHM, 0))
+    return false;
+  CHashHandle hash;
+  if (!hash.Create(prov.Handle(), NULL, 0))
+    return false;
+
+  const UInt64 total = (UInt64)1 << numCyclesPower;
+  for (UInt64 done = 0; done < total;)
+  {
+    const unsigned step = (total - done < kUnroll) ? (unsigned)(total - done) : kUnroll;
+    for (unsigned i = 0; i < step; i++)
+    {
+      const UInt64 counter = done + i;
+      Byte *q = p + i * itemSize + size;
+      q[0] = (Byte)counter;
+      q[1] = (Byte)(counter >> 8);
+      q[2] = (Byte)(counter >> 16);
+      q[3] = (Byte)(counter >> 24);
+      q[4] = 0;
+      q[5] = 0;
+      q[6] = 0;
+      q[7] = 0;
+    }
+    if (!hash.Add(p, itemSize * step))
+      return false;
+    done += step;
+  }
+  return hash.Finish(key, 32);
+#else
+  UNUSED_VAR(saltPassword)
+  UNUSED_VAR(size)
+  UNUSED_VAR(numCyclesPower)
+  UNUSED_VAR(key)
+  return false;
+#endif
+}
+
 /* ---------------- AES ---------------- */
 
 #ifdef _WIN32

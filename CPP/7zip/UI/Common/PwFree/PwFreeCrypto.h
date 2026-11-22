@@ -80,6 +80,16 @@ void SecureZero(void *data, size_t size);
 // Ignores CR, LF, spaces. Returns false on an invalid character.
 bool Base64_Decode(const char *src, size_t srcSize, CByteBuffer &dest);
 
+/* ---- SHA-256 (7z AES key derivation) ---- */
+
+bool Sha256_Calc(const void *data, size_t size, Byte *digest);
+
+// 7-Zip's AES key derivation: one SHA-256 over 2^numCyclesPower copies of
+// (salt || password || counter), the counter being written into the last eight
+// bytes of each copy in little endian order.
+bool Sha256_Kdf7z(const Byte *saltPassword, size_t size,
+    unsigned numCyclesPower, Byte *key);
+
 /* ---- ZipCrypto stream cipher ---- */
 
 class CZipCipher

@@ -62,11 +62,21 @@ A candidate is accepted only when it decrypts and passes a real integrity check:
   alone is not enough: about one in 256 wrong passwords passes it.
 * **WinZip AES** - PBKDF2-HMAC-SHA1 with 1000 iterations, compared against the
   2 byte password verifier and then the 10 byte HMAC of the payload.
+* **7z, encrypted header** (`-mhe=on`) - the packed next header is decrypted,
+  decoded through the coder chain (AES, then LZMA, LZMA2 or Copy) and its CRC32
+  is compared with the digest stored in the folder record. A header that stores
+  no digest has to parse cleanly as a real header instead.
+* **7z, encrypted payload** - the first AES folder is probed: the AES output
+  size, the zero padding of the last block and, when the folder stores a CRC,
+  the decoded CRC32 are checked. Without a digest the LZMA2 chunk chain behind
+  the AES coder is walked and every chunk has to land exactly on the AES output
+  boundary. A random key passed neither test in 300 000 trials.
 * Any other format returns `E_PWFREE_NOPROBE` and the module steps aside.
 
-The 7z format is not covered yet: its header encryption needs a dedicated probe
-and the generic path (reopening the archive through the codec) is too slow to be
-useful inside a chain.
+The 7z probe reads the signature, the start header and the next header only;
+even an archive with a huge payload costs a single KDF run per candidate. The
+key derivation is the 7-Zip SHA-256 loop over 2^19 salt/password/counter records
+and runs through bcrypt, roughly 7 ms per candidate on one core.
 
 ## Settings
 
@@ -90,7 +100,8 @@ The two checkboxes at the bottom of the 7zFM settings page toggle `Enabled` and
 the facade and does three things:
 
 * defines `Z7_PWFREE`, which enables the hooks;
-* appends the eleven objects to `PWFREE_OBJS`;
+* appends the twelve objects to `PWFREE_OBJS`;
+* adds the LZMA and LZMA2 decoders only to the targets that do not link them yet;
 * adds `bcrypt.lib` and `winhttp.lib`.
 
 `7zip.mak` compiles those objects with `$(COMPL_O1)`, that is without a
