@@ -143,6 +143,93 @@ jobs:
         type pwfree.log
         findstr /C:"Everything is Ok" pwfree.log
 
+    # Verify 7zFM.exe launches without crashing (catches ABI/manifest/DLL errors).
+    - name: GUI launch smoke test (x64)
+      if: success() && matrix.platform == 'x64'
+      shell: pwsh
+      run: |
+        $fm = Join-Path $env:APPVEYOR_BUILD_FOLDER "out\7zFM.exe"
+        $p = Start-Process -FilePath $fm -PassThru
+        Start-Sleep -Seconds 3
+        if ($p.HasExited) {
+          Write-Host ("::error::7zFM.exe exited prematurely with code 0x{0:X8}" -f $p.ExitCode)
+          exit 1
+        }
+        Write-Host ("7zFM.exe launch OK (PID={0})" -f $p.Id)
+        $p.CloseMainWindow() | Out-Null
+        Start-Sleep -Milliseconds 500
+        if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+
+    # Package x64 portable zip and native x64 SFX installer.
+    - name: Package x64 installer and portable zip
+      if: success() && matrix.platform == 'x64'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $root = $env:APPVEYOR_BUILD_FOLDER
+        $out = Join-Path $root 'out'
+        $dist = Join-Path $root 'dist'
+        $port = Join-Path $root 'pkg-portable'
+        $inst = Join-Path $root 'pkg-install'
+        New-Item -ItemType Directory -Force -Path $dist, $port, (Join-Path $port 'Codecs'), $inst, (Join-Path $inst 'Codecs') | Out-Null
+
+        $coreFiles = @('7zFM.exe', '7zG.exe', '7z.exe', '7z.dll', '7-zip.dll', '7z.sfx', '7zCon.sfx')
+        $extraPortable = @('7za.exe', '7zz.exe', '7zFMa.exe')
+        $codecDlls = @('brotli.dll', 'lizard.dll', 'lz4.dll', 'lz5.dll', 'zstd.dll', 'flzma2.dll')
+
+        foreach ($f in $coreFiles) {
+          $src = Join-Path $out $f
+          if (Test-Path $src) {
+            Copy-Item $src $port
+            Copy-Item $src $inst
+          }
+        }
+        foreach ($f in $extraPortable) {
+          $src = Join-Path $out $f
+          if (Test-Path $src) { Copy-Item $src $port }
+        }
+        if (Test-Path (Join-Path $out 'Uninstall.exe')) {
+          Copy-Item (Join-Path $out 'Uninstall.exe') $inst
+        }
+        foreach ($c in $codecDlls) {
+          $src = Join-Path $out $c
+          if (Test-Path $src) {
+            Copy-Item $src (Join-Path $port 'Codecs')
+            Copy-Item $src (Join-Path $inst 'Codecs')
+          }
+        }
+        foreach ($doc in @('License.txt', 'readme.txt')) {
+          $src = Join-Path $root "DOC\$doc"
+          if (Test-Path $src) {
+            Copy-Item $src $port
+            Copy-Item $src $inst
+          }
+        }
+
+        $sevenZip = Join-Path $out '7z.exe'
+        $portZip = Join-Path $dist '7-Zip-ZS-PwFree-x64-portable.zip'
+        & $sevenZip a -tzip -mx9 $portZip "$port\*"
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+
+        $payload = Join-Path $root 'installer-payload.7z'
+        & $sevenZip a -t7z -m0=LZMA2 -mx9 $payload "$inst\*"
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+
+        $installStub = Join-Path $out 'Install.exe'
+        $setupExe = Join-Path $dist '7-Zip-ZS-PwFree-x64-setup.exe'
+        cmd /c "copy /b `"$installStub`" + `"$payload`" `"$setupExe`""
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setupExe)) { exit 1 }
+
+        Get-ChildItem $dist | Format-Table Name, Length
+
+    - name: Upload x64 installer and portable packages
+      if: success() && matrix.platform == 'x64'
+      uses: actions/upload-artifact@v4
+      with:
+        name: 7-Zip-ZS-PwFree-x64-packages
+        path: dist/*
+        if-no-files-found: error
+
     - name: Upload artifacts
       if: success()
       uses: actions/upload-artifact@v4
