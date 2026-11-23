@@ -23,6 +23,7 @@
 #include "FormatUtils.h"
 #include "IFolder.h"
 #include "LangUtils.h"
+#include "ModernTheme.h"
 #include "MyLoadMenu.h"
 #include "RegistryUtils.h"
 #include "ViewSettings.h"
@@ -56,8 +57,7 @@ void CPanelCallbackImp::SetFocusToPath(unsigned index)
   if (g_App.NumPanels == 1)
     newPanelIndex = g_App.LastFocusedPanel;
   _app->RefreshTitle();
-  _app->Panels[newPanelIndex]._headerComboBox.SetFocus();
-  _app->Panels[newPanelIndex]._headerComboBox.ShowDropDown();
+  _app->Panels[newPanelIndex].SetBreadcrumbEditMode(true);
 }
 
 
@@ -189,37 +189,6 @@ HRESULT CApp::CreateOnePanel(unsigned panelIndex, const UString &mainPath, const
 }
 
 
-static void CreateToolbar(HWND parent,
-    NControl::CImageList &imageList,
-    NControl::CToolBar &toolBar,
-    bool largeButtons)
-{
-  toolBar.Attach(::CreateWindowEx(0, TOOLBARCLASSNAME, NULL, 0
-      | WS_CHILD
-      | WS_VISIBLE
-      | TBSTYLE_FLAT
-      | TBSTYLE_TOOLTIPS
-      | TBSTYLE_WRAPABLE
-      // | TBSTYLE_AUTOSIZE
-      // | CCS_NORESIZE
-      #ifdef UNDER_CE
-      | CCS_NODIVIDER
-      | CCS_NOPARENTALIGN
-      #endif
-      ,0,0,0,0, parent, NULL, g_hInstance, NULL));
-
-  // TB_BUTTONSTRUCTSIZE message, which is required for
-  // backward compatibility.
-  toolBar.ButtonStructSize();
-
-  imageList.Create(
-      largeButtons ? 48: 24,
-      largeButtons ? 36: 24,
-      ILC_MASK | ILC_COLOR32, 0, 0);
-  toolBar.SetImageList(0, imageList);
-}
-
-
 struct CButtonInfo
 {
   int CommandID;
@@ -266,63 +235,32 @@ static void SetButtonText(int commandID, UString &s)
   SetButtonText(commandID, g_ArchiveButtons, Z7_ARRAY_SIZE(g_ArchiveButtons), s);
 }
 
-static void AddButton(
-    NControl::CImageList &imageList,
-    NControl::CToolBar &toolBar,
-    const CButtonInfo &butInfo, bool showText, bool large)
-{
-  TBBUTTON but;
-  but.iBitmap = 0;
-  but.idCommand = butInfo.CommandID;
-  but.fsState = TBSTATE_ENABLED;
-  but.fsStyle = TBSTYLE_BUTTON;
-  but.dwData = 0;
-
-  UString s = butInfo.GetText();
-  but.iString = 0;
-  if (showText)
-    but.iString = (INT_PTR)(LPCWSTR)s;
-
-  but.iBitmap = imageList.GetImageCount();
-  HBITMAP b = ::LoadBitmap(g_hInstance,
-      large ?
-      MAKEINTRESOURCE(butInfo.BitmapResID):
-      MAKEINTRESOURCE(butInfo.Bitmap2ResID));
-  if (b)
-  {
-    imageList.AddMasked(b, RGB(255, 0, 255));
-    ::DeleteObject(b);
-  }
-  #ifdef _UNICODE
-  toolBar.AddButton(1, &but);
-  #else
-  toolBar.AddButtonW(1, &but);
-  #endif
-}
-
 void CApp::ReloadToolbars()
 {
   _buttonsImageList.Destroy();
   _toolBar.Destroy();
-
+  _modernToolBar.Destroy();
 
   if (ShowArchiveToolbar || ShowStandardToolbar)
   {
-    CreateToolbar(_window, _buttonsImageList, _toolBar, LargeButtons);
-    unsigned i;
-    if (ShowArchiveToolbar)
-      for (i = 0; i < Z7_ARRAY_SIZE(g_ArchiveButtons); i++)
-        AddButton(_buttonsImageList, _toolBar, g_ArchiveButtons[i], ShowButtonsLables, LargeButtons);
-    if (ShowStandardToolbar)
-      for (i = 0; i < Z7_ARRAY_SIZE(g_StandardButtons); i++)
-        AddButton(_buttonsImageList, _toolBar, g_StandardButtons[i], ShowButtonsLables, LargeButtons);
-
-#ifdef ZIP7_DARKMODE
-    dmlib::setDarkLineAbovePanelToolbar(_toolBar);
-    dmlib::setDarkTooltips(_toolBar, static_cast<int>(dmlib::ToolTipsType::toolbar));
-#endif
-
-    _toolBar.AutoSize();
+    if (_modernToolBar.Create(_window, ShowButtonsLables, LargeButtons))
+    {
+      if (ShowArchiveToolbar)
+      {
+        _modernToolBar.AddButton(kMenuCmdID_Toolbar_Add,     NModernUI::kIconAdd,     LangString(IDS_ADD));
+        _modernToolBar.AddButton(kMenuCmdID_Toolbar_Extract, NModernUI::kIconExtract, LangString(IDS_EXTRACT));
+        _modernToolBar.AddButton(kMenuCmdID_Toolbar_Test,    NModernUI::kIconTest,    LangString(IDS_TEST));
+      }
+      if (ShowArchiveToolbar && ShowStandardToolbar)
+        _modernToolBar.AddSeparator();
+      if (ShowStandardToolbar)
+      {
+        _modernToolBar.AddButton(IDM_COPY_TO,    NModernUI::kIconCopy,   LangString(IDS_BUTTON_COPY));
+        _modernToolBar.AddButton(IDM_MOVE_TO,    NModernUI::kIconMove,   LangString(IDS_BUTTON_MOVE));
+        _modernToolBar.AddButton(IDM_DELETE,     NModernUI::kIconDelete, LangString(IDS_BUTTON_DELETE));
+        _modernToolBar.AddButton(IDM_PROPERTIES, NModernUI::kIconInfo,   LangString(IDS_BUTTON_INFO));
+      }
+    }
   }
 }
 
@@ -341,6 +279,7 @@ HRESULT CApp::Create(HWND hwnd, const UString &mainPath, const UString &arcForma
 #ifdef ZIP7_DARKMODE
   dmlib::initDarkModeEx(L"7zDark");
 #endif
+  NModernUI::ApplyWindowChrome(hwnd);
 
   #ifdef UNDER_CE
   _commandBar.Create(g_hInstance, hwnd, 1);

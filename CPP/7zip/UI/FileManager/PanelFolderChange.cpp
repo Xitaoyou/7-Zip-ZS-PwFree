@@ -409,6 +409,9 @@ void CPanel::LoadFullPathAndShow()
   _appState->FolderHistory.AddString(_currentFolderPrefix);
 
   _headerComboBox.SetText(_currentFolderPrefix);
+  _breadcrumbBar.SetPath(_currentFolderPrefix);
+  if (_breadcrumbEditMode)
+    SetBreadcrumbEditMode(false);
 
   #ifndef UNDER_CE
 
@@ -534,6 +537,9 @@ bool CPanel::OnNotifyComboBoxEndEdit(PNMCBEENDEDITW info, LRESULT &result)
   if (info->iWhy == CBENF_ESCAPE)
   {
     _headerComboBox.SetText(_currentFolderPrefix);
+  _breadcrumbBar.SetPath(_currentFolderPrefix);
+  if (_breadcrumbEditMode)
+    SetBreadcrumbEditMode(false);
     PostMsg(kSetFocusToListView);
     result = FALSE;
     return true;
@@ -565,6 +571,9 @@ bool CPanel::OnNotifyComboBoxEndEdit(PNMCBEENDEDIT info, LRESULT &result)
   if (info->iWhy == CBENF_ESCAPE)
   {
     _headerComboBox.SetText(_currentFolderPrefix);
+  _breadcrumbBar.SetPath(_currentFolderPrefix);
+  if (_breadcrumbEditMode)
+    SetBreadcrumbEditMode(false);
     PostMsg(kSetFocusToListView);
     result = FALSE;
     return true;

@@ -1144,6 +1144,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
       break;
     */
     
+    case 0x02E0: // WM_DPICHANGED
+    {
+      const RECT *suggested = (const RECT *)lParam;
+      if (suggested)
+      {
+        ::SetWindowPos(hWnd, NULL,
+            suggested->left, suggested->top,
+            suggested->right - suggested->left,
+            suggested->bottom - suggested->top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+      }
+      g_App.MoveSubWindows();
+      g_App._modernToolBar.Invalidate();
+      return 0;
+    }
+
     case WM_NOTIFY:
     {
       g_App.OnNotify((int)wParam, (LPNMHDR)lParam);
@@ -1200,7 +1216,13 @@ void CApp::MoveSubWindows()
   }
   #endif
 
-  if (_toolBar)
+  if (_modernToolBar)
+  {
+    const int h2 = _modernToolBar.GetPreferredHeight();
+    _modernToolBar.Move(0, headerSize, xSize, h2);
+    headerSize += h2;
+  }
+  else if (_toolBar)
   {
     _toolBar.AutoSize();
     #ifdef UNDER_CE

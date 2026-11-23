@@ -28,6 +28,7 @@
 #include "FSFolder.h"
 #include "FormatUtils.h"
 #include "LangUtils.h"
+#include "ModernTheme.h"
 #include "Panel.h"
 #include "RootFolder.h"
 
@@ -153,6 +154,24 @@ LRESULT CPanel::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
       if (OnContextMenu(HANDLE(wParam), GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)))
         return 0;
       break;
+    case NModernUI::kMsgBreadcrumbUp:
+      OpenParentFolder();
+      return 0;
+    case NModernUI::kMsgBreadcrumbNav:
+    {
+      UString target;
+      if (_breadcrumbBar.GetSegmentPath((unsigned)wParam, target))
+      {
+        if (target.IsEmpty())
+          OpenDrivesFolder();
+        else
+          BindToPathAndRefresh(target);
+      }
+      return 0;
+    }
+    case NModernUI::kMsgBreadcrumbEdit:
+      SetBreadcrumbEditMode(true);
+      return 0;
     /*
     case WM_DROPFILES:
       CompressDropFiles(HDROP(wParam));
@@ -584,6 +603,22 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
 
   const int sizes[] = {220, 320, 420, -1};
   _statusBar.SetParts(4, sizes);
+
+  // Bandizip-inspired modern flat styling for ListView, StatusBar, and BreadcrumbBar.
+  NModernUI::StyleListView(_listView);
+  NModernUI::StyleStatusBar(_statusBar);
+  _breadcrumbEditMode = false;
+  if (_breadcrumbBar.Create(*this))
+  {
+    _breadcrumbBar.SetPath(_currentFolderPrefix);
+    if (_headerReBar)
+      _headerReBar.Show(SW_HIDE);
+    else
+    {
+      _headerToolBar.Show(SW_HIDE);
+      _headerComboBox.Show(SW_HIDE);
+    }
+  }
   // _statusBar2.SetParts(5, sizes);
 
   /*
@@ -606,43 +641,73 @@ void CPanel::OnDestroy()
   CWindow2::OnDestroy();
 }
 
+void CPanel::SetBreadcrumbEditMode(bool editMode)
+{
+  if (!_breadcrumbBar)
+    return;
+  _breadcrumbEditMode = editMode;
+  _breadcrumbBar.Show(!editMode);
+  if (_headerReBar)
+    _headerReBar.Show(editMode ? SW_SHOW : SW_HIDE);
+  else
+  {
+    _headerToolBar.Show(editMode ? SW_SHOW : SW_HIDE);
+    _headerComboBox.Show(editMode ? SW_SHOW : SW_HIDE);
+  }
+  RECT rc;
+  GetClientRect(&rc);
+  ChangeWindowSize(RECT_SIZE_X(rc), RECT_SIZE_Y(rc));
+  if (editMode)
+  {
+    _headerComboBox.SetFocus();
+    _headerComboBox.ShowDropDown();
+  }
+}
+
 void CPanel::ChangeWindowSize(int xSize, int ySize)
 {
   if (!(HWND)*this)
     return;
   int kHeaderSize;
   int kStatusBarSize;
-  // int kStatusBar2Size;
   RECT rect;
-  if (_headerReBar)
-    _headerReBar.GetWindowRect(&rect);
-  else
-    _headerToolBar.GetWindowRect(&rect);
 
-  kHeaderSize = RECT_SIZE_Y(rect);
+  if (_breadcrumbBar && !_breadcrumbEditMode)
+  {
+    kHeaderSize = _breadcrumbBar.GetPreferredHeight();
+    _breadcrumbBar.Move(0, 0, xSize, kHeaderSize);
+  }
+  else
+  {
+    if (_headerReBar)
+      _headerReBar.GetWindowRect(&rect);
+    else
+      _headerToolBar.GetWindowRect(&rect);
+    kHeaderSize = RECT_SIZE_Y(rect);
+  }
 
   _statusBar.GetWindowRect(&rect);
   kStatusBarSize = RECT_SIZE_Y(rect);
-  
-  // _statusBar2.GetWindowRect(&rect);
-  // kStatusBar2Size = RECT_SIZE_Y(rect);
- 
+  const int minSb = NModernUI::ScaleDip(26, NModernUI::GetDpiForHwnd(_statusBar));
+  if (kStatusBarSize < minSb)
+    kStatusBarSize = minSb;
+
   int yListViewSize = MyMax(ySize - kHeaderSize - kStatusBarSize, 0);
   const int kStartXPos = 32;
-  if (_headerReBar)
+  if (!_breadcrumbBar || _breadcrumbEditMode)
   {
-  }
-  else
-  {
-    _headerToolBar.Move(0, 0, xSize, 0);
-    _headerComboBox.Move(kStartXPos, 2,
-        MyMax(xSize - kStartXPos - 10, kStartXPos), 0);
+    if (_headerReBar)
+    {
+    }
+    else
+    {
+      _headerToolBar.Move(0, 0, xSize, 0);
+      _headerComboBox.Move(kStartXPos, 2,
+          MyMax(xSize - kStartXPos - 10, kStartXPos), 0);
+    }
   }
   _listView.Move(0, kHeaderSize, xSize, yListViewSize);
   _statusBar.Move(0, kHeaderSize + yListViewSize, xSize, kStatusBarSize);
-  // _statusBar2.MoveWindow(0, kHeaderSize + yListViewSize + kStatusBarSize, xSize, kStatusBar2Size);
-  // _statusBar.MoveWindow(0, 100, xSize, kStatusBarSize);
-  // _statusBar2.MoveWindow(0, 200, xSize, kStatusBar2Size);
 }
 
 bool CPanel::OnSize(WPARAM /* wParam */, int xSize, int ySize)

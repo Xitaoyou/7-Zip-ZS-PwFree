@@ -38,6 +38,7 @@
 #include "ExtractCallback.h"
 
 #include "AppState.h"
+#include "BreadcrumbBar.h"
 #include "IFolder.h"
 #include "MyCom2.h"
 #include "ProgressDialog2.h"
@@ -353,7 +354,11 @@ public:
   Int32 _isRawSortProp;
 
   CMyListView _listView;
+  NModernUI::CBreadcrumbBar _breadcrumbBar;
+  bool _breadcrumbEditMode;
   CPanelCallback *_panelCallback;
+
+  void SetBreadcrumbEditMode(bool editMode);
 
 #ifdef ZIP7_DARKMODE
   void setSubclassListNotify();

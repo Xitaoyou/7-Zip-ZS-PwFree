@@ -12,6 +12,7 @@ LIBS = $(LIBS) delayimp.lib
 
 FM_OBJS = \
   $O\App.obj \
+  $O\BreadcrumbBar.obj \
   $O\BrowseDialog.obj \
   $O\BrowseDialog2.obj \
   $O\ClassDefs.obj \
@@ -28,6 +29,8 @@ FM_OBJS = \
   $O\LangUtils.obj \
   $O\MemDialog.obj \
   $O\MenuPage.obj \
+  $O\ModernTheme.obj \
+  $O\ModernToolbar.obj \
   $O\MyLoadMenu.obj \
   $O\OpenCallback.obj \
   $O\OptionsDialog.obj \
@@ -98,5 +101,10 @@ AGENT_OBJS = \
   $O\ArchiveFolderOpen.obj \
   $O\ArchiveFolderOut.obj \
   $O\UpdateCallbackAgent.obj \
+
+# Explicit header dependencies to prevent stale-obj ABI mismatches when
+# CPanel / CApp / modern UI headers or the manifest change during incremental builds.
+$(FM_OBJS): ../../UI/FileManager/App.h ../../UI/FileManager/Panel.h ../../UI/FileManager/ModernTheme.h ../../UI/FileManager/ModernToolbar.h ../../UI/FileManager/BreadcrumbBar.h
+$O\resource.res: ../../UI/FileManager/7zFM.exe.manifest ../../UI/FileManager/SettingsPage2.rc
 
 # we need empty line after last line above

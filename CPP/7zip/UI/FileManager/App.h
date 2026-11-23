@@ -7,6 +7,7 @@
 #include "../../../Windows/Control/ImageList.h"
 
 #include "AppState.h"
+#include "ModernToolbar.h"
 #include "Panel.h"
 
 class CApp;
@@ -79,6 +80,7 @@ public:
   NWindows::NControl::CCommandBar _commandBar;
   #endif
   NWindows::NControl::CToolBar _toolBar;
+  NModernUI::CModernToolbar _modernToolBar;
 
   CDropTarget *_dropTargetSpec;
   CMyComPtr<IDropTarget> _dropTarget;
