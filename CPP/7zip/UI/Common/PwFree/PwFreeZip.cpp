@@ -22,8 +22,34 @@ static const UInt32 kZip64EocdSig = 0x06064B50;
 static const UInt32 kZip64LocatorSig = 0x07064B50;
 
 // The CRC pass decrypts and inflates the entry; keep it bounded so a huge
-// entry cannot stall the callback. Bigger entries still get the cheap check.
+// entry cannot stall the callback.
 static const UInt64 kMaxVerifySize = (UInt64)1 << 26; // 64 MB
+// Small entry ciphertexts are cached in memory inside the probe to avoid
+// re-reading from disk on every candidate password.
+static const UInt64 kMaxCacheCipher = (UInt64)1 << 20; // 1 MB
+static const UInt64 kMaxUnzipSize = (UInt64)64 << 20;  // 64 MB
+
+static bool ReadFileAt(NFile::NIO::CInFile &file, UInt64 offset, void *data, size_t size)
+{
+  if (size == 0)
+    return true;
+  UInt64 newPos;
+  if (!file.Seek(offset, newPos))
+    return false;
+  Byte *p = (Byte *)data;
+  size_t done = 0;
+  while (done < size)
+  {
+    UInt32 processed = 0;
+    const size_t todo = (size - done > (1 << 20)) ? (size_t)(1 << 20) : (size - done);
+    if (!file.ReadPart(p + done, (UInt32)todo, processed))
+      return false;
+    if (processed == 0)
+      return false;
+    done += processed;
+  }
+  return true;
+}
 
 CEntryInfo::CEntryInfo():
     Encrypted(false),
@@ -51,34 +77,17 @@ public:
   CReader() {}
   ~CReader() { _file.Close(); }
 
-  bool Open(const FString &path)
+  bool Open(const FString &path, UInt64 &fileSize)
   {
+    fileSize = 0;
     if (!_file.Open(path))
       return false;
-    UInt64 len;
-    return _file.GetLength(len);
+    return _file.GetLength(fileSize);
   }
 
   bool ReadAt(UInt64 offset, void *data, size_t size)
   {
-    if (size == 0)
-      return true;
-    UInt64 newPos;
-    if (!_file.Seek(offset, newPos))
-      return false;
-    Byte *p = (Byte *)data;
-    size_t done = 0;
-    while (done < size)
-    {
-      UInt32 processed = 0;
-      const size_t todo = (size - done > (1 << 20)) ? (size_t)(1 << 20) : (size - done);
-      if (!_file.ReadPart(p + done, (UInt32)todo, processed))
-        return false;
-      if (processed == 0)
-        return false;
-      done += processed;
-    }
-    return true;
+    return ReadFileAt(_file, offset, data, size);
   }
 };
 
@@ -184,14 +193,9 @@ bool Read_Info(const FString &path, CEntryInfo &info)
   info = CEntryInfo();
 
   CReader r;
-  if (!r.Open(path))
-    return false;
-
-  NFile::NIO::CInFile probe;
   UInt64 fileSize = 0;
-  if (!probe.Open(path) || !probe.GetLength(fileSize))
+  if (!r.Open(path, fileSize))
     return false;
-  probe.Close();
 
   info.ArcSize = fileSize;
 
@@ -209,6 +213,10 @@ bool Read_Info(const FString &path, CEntryInfo &info)
   CByteBuffer cd((size_t)cdSize);
   if (!r.ReadAt(base + cdOffset, cd, (size_t)cdSize))
     return false;
+
+  bool foundBest = false;
+  CEntryInfo best;
+  best.ArcSize = fileSize;
 
   size_t pos = 0;
   const size_t cdLen = (size_t)cdSize;
@@ -257,44 +265,52 @@ bool Read_Info(const FString &path, CEntryInfo &info)
       }
     }
 
-    if ((flags & 1) != 0 && csize != 0)
+    const bool supportedZipCrypto = (!isAes && (realMethod == 0 || realMethod == 8));
+    if ((flags & 1) != 0 && csize != 0 && (isAes || supportedZipCrypto))
     {
-      info.Encrypted = true;
-      info.IsWinZipAes = isAes;
-      info.Method = realMethod;
-      info.Flags = flags;
-      info.AesStrength = aesStrength;
-      info.Crc = crc;
-      info.CSize = csize;
-      info.USize = usize;
-
-      Byte local[30];
-      if (localOffset > fileSize || base > fileSize - localOffset)
-        return false;
-      if (!r.ReadAt(base + localOffset, local, 30))
-        return false;
-      if (Get32(local) != kLocalSig)
-        return false;
-      const size_t lNameLen = Get16(local + 26);
-      const size_t lExtraLen = Get16(local + 28);
-      info.DataOffset = base + localOffset + 30 + lNameLen + lExtraLen;
-      if (info.DataOffset > fileSize || info.CSize > fileSize - info.DataOffset)
-        return false;
-
-      // Streamed entries (flag 8) have no CRC in the local header, the DOS
-      // time is used instead. Both are 8 bit checks, the CRC pass decides.
-      info.CheckByte = ((flags & 8) != 0)
-          ? (Byte)(Get16(local + 10) >> 8)
-          : (Byte)(crc >> 24);
-      return true;
+      if (!foundBest || csize < best.CSize)
+      {
+        Byte local[30];
+        if (localOffset <= fileSize && base <= fileSize - localOffset
+            && r.ReadAt(base + localOffset, local, 30)
+            && Get32(local) == kLocalSig)
+        {
+          const size_t lNameLen = Get16(local + 26);
+          const size_t lExtraLen = Get16(local + 28);
+          const UInt64 dataOffset = base + localOffset + 30 + lNameLen + lExtraLen;
+          if (dataOffset <= fileSize && csize <= fileSize - dataOffset)
+          {
+            best.Encrypted = true;
+            best.IsWinZipAes = isAes;
+            best.Method = realMethod;
+            best.Flags = flags;
+            best.AesStrength = aesStrength;
+            best.Crc = crc;
+            best.CSize = csize;
+            best.USize = usize;
+            best.DataOffset = dataOffset;
+            best.CheckByte = ((flags & 8) != 0)
+                ? (Byte)(Get16(local + 10) >> 8)
+                : (Byte)(crc >> 24);
+            foundBest = true;
+            // A tiny entry (< 4 KB) is already fast enough; no need to scan further.
+            if (csize <= 4096)
+              break;
+          }
+        }
+      }
     }
 
     pos += entrySize;
   }
-  return false;
+
+  if (!foundBest)
+    return false;
+  info = best;
+  return true;
 }
 
-bool FileMd5_Hex(const FString &path, AString &hex)
+bool FileMd5_Hex(const FString &path, AString &hex, volatile long *cancel)
 {
   hex.Empty();
   NFile::NIO::CInFile file;
@@ -305,6 +321,11 @@ bool FileMd5_Hex(const FString &path, AString &hex)
   CByteBuffer buf(1 << 16);
   for (;;)
   {
+    if (cancel && *cancel != 0)
+    {
+      file.Close();
+      return false;
+    }
     UInt32 processed = 0;
     if (!file.ReadPart((Byte *)buf, (UInt32)buf.Size(), processed))
     {
@@ -380,13 +401,15 @@ bool Unzip_FirstEntry(const Byte *zipData, size_t zipSize, CByteBuffer &out)
   // UInt64 and only the final size is narrowed (this file also builds as x86).
   const UInt64 avail = (UInt64)zipSize - offset;
   if (method == 8 && (csize == 0 || usize == 0))
-    return Inflate_Raw_Grow(src, (size_t)avail, out);
+    return Inflate_Raw_Grow(src, (size_t)avail, out, (size_t)kMaxUnzipSize);
 
   if (csize > avail)
     return false;
 
   if (method == 0)
   {
+    if (csize > kMaxUnzipSize)
+      return false;
     out.CopyFrom(src, (size_t)csize);
     return true;
   }
@@ -394,8 +417,8 @@ bool Unzip_FirstEntry(const Byte *zipData, size_t zipSize, CByteBuffer &out)
     return false;
 
   // The vendor dictionaries have broken CRCs, so the declared output size is
-  // trusted and the CRC is not checked at all.
-  if (usize == 0)
+  // trusted (bounded by kMaxUnzipSize) and the CRC is not checked at all.
+  if (usize == 0 || usize > kMaxUnzipSize)
     return false;
   out.Alloc((size_t)usize);
   return Inflate_Raw(src, (size_t)csize, out, (size_t)usize);
@@ -429,64 +452,6 @@ bool Read_FirstEntry(const FString &path, CByteBuffer &data)
   return Unzip_FirstEntry(buf, (size_t)len, data);
 }
 
-bool Verify_ZipCrypto(const FString &path, const CEntryInfo &info,
-    const Byte *password, size_t passwordSize)
-{
-  if (!info.Encrypted || info.IsWinZipAes)
-    return false;
-  if (info.CSize < 12)
-    return false;
-
-  CReader r;
-  if (!r.Open(path))
-    return false;
-
-  Byte header[12];
-  if (!r.ReadAt(info.DataOffset, header, 12))
-    return false;
-
-  CZipCipher cipher;
-  cipher.SetPassword(password, passwordSize);
-  cipher.Decrypt(header, 12);
-
-  // The last decrypted byte must match the high byte of the CRC, or the high
-  // byte of the DOS time when a data descriptor is used. One wrong password
-  // in 256 gets past this line, which is why the CRC pass below is mandatory.
-  if (header[11] != info.CheckByte)
-    return false;
-
-  if (info.CSize - 12 > kMaxVerifySize)
-    return false; // too large to confirm, let a slower verifier decide
-
-  const size_t dataSize = (size_t)(info.CSize - 12);
-  CByteBuffer data(dataSize);
-  if (dataSize != 0)
-  {
-    if (!r.ReadAt(info.DataOffset + 12, data, dataSize))
-      return false;
-    cipher.Decrypt(data, dataSize);
-  }
-
-  UInt32 crc = 0;
-  if (info.Method == 0)
-  {
-    crc = Crc32_Calc(data, dataSize);
-  }
-  else if (info.Method == 8)
-  {
-    if (info.USize > kMaxVerifySize)
-      return false;
-    CByteBuffer out((size_t)info.USize);
-    if (!Inflate_Raw(data, dataSize, out, (size_t)info.USize))
-      return false;
-    crc = Crc32_Calc(out, (size_t)info.USize);
-  }
-  else
-    return false;
-
-  return crc == info.Crc;
-}
-
 static unsigned AesSaltSize(unsigned strength)
 {
   return (strength == 1) ? 8 : ((strength == 2) ? 12 : 16);
@@ -497,59 +462,242 @@ static unsigned AesKeySize(unsigned strength)
   return (strength == 1) ? 16 : ((strength == 2) ? 24 : 32);
 }
 
-bool Verify_WinZipAes(const FString &path, const CEntryInfo &info,
-    const Byte *password, size_t passwordSize)
+CZipCryptoProbe::CZipCryptoProbe(): _hasCachedData(false), _ok(false)
 {
+  memset(_header, 0, sizeof(_header));
+}
+
+CZipCryptoProbe::~CZipCryptoProbe()
+{
+  _file.Close();
+}
+
+bool CZipCryptoProbe::Init(const FString &path, const CEntryInfo &info)
+{
+  _ok = false;
+  _hasCachedData = false;
+  _cachedData.Free();
+  _file.Close();
+
+  if (!info.Encrypted || info.IsWinZipAes || info.CSize < 12)
+    return false;
+  if (info.Method != 0 && info.Method != 8)
+    return false;
+  if (info.CSize - 12 > kMaxVerifySize)
+    return false;
+  if (info.Method == 8 && info.USize > kMaxVerifySize)
+    return false;
+
+  if (!_file.Open(path))
+    return false;
+  if (!ReadFileAt(_file, info.DataOffset, _header, 12))
+  {
+    _file.Close();
+    return false;
+  }
+
+  _info = info;
+  const UInt64 dataSize = info.CSize - 12;
+  if (dataSize <= kMaxCacheCipher)
+  {
+    if (dataSize != 0)
+    {
+      _cachedData.Alloc((size_t)dataSize);
+      if (!ReadFileAt(_file, info.DataOffset + 12, _cachedData, (size_t)dataSize))
+      {
+        _cachedData.Free();
+        _file.Close();
+        return false;
+      }
+    }
+    _hasCachedData = true;
+    _file.Close(); // no longer need the disk handle
+  }
+
+  _ok = true;
+  return true;
+}
+
+bool CZipCryptoProbe::Check(const Byte *password, size_t passwordSize)
+{
+  if (!_ok)
+    return false;
+
+  Byte header[12];
+  memcpy(header, _header, 12);
+
+  CZipCipher cipher;
+  cipher.SetPassword(password, passwordSize);
+  cipher.Decrypt(header, 12);
+
+  if (header[11] != _info.CheckByte)
+    return false;
+
+  const size_t dataSize = (size_t)(_info.CSize - 12);
+  CByteBuffer data(dataSize);
+  if (dataSize != 0)
+  {
+    if (_hasCachedData)
+      memcpy(data, _cachedData, dataSize);
+    else if (!ReadFileAt(_file, _info.DataOffset + 12, data, dataSize))
+      return false;
+    cipher.Decrypt(data, dataSize);
+  }
+
+  UInt32 crc = 0;
+  if (_info.Method == 0)
+  {
+    crc = Crc32_Calc(data, dataSize);
+  }
+  else if (_info.Method == 8)
+  {
+    CByteBuffer out((size_t)_info.USize);
+    if (!Inflate_Raw(data, dataSize, out, (size_t)_info.USize))
+      return false;
+    crc = Crc32_Calc(out, (size_t)_info.USize);
+  }
+  else
+    return false;
+
+  return crc == _info.Crc;
+}
+
+CWinZipAesProbe::CWinZipAesProbe():
+    _saltSize(0), _keySize(0), _cipherOffset(0), _cipherSize(0),
+    _hasCachedCipher(false), _ok(false)
+{
+  memset(_salt, 0, sizeof(_salt));
+  memset(_verif, 0, sizeof(_verif));
+  memset(_storedMac, 0, sizeof(_storedMac));
+}
+
+CWinZipAesProbe::~CWinZipAesProbe()
+{
+  _file.Close();
+}
+
+bool CWinZipAesProbe::Init(const FString &path, const CEntryInfo &info)
+{
+  _ok = false;
+  _hasCachedCipher = false;
+  _cachedCipher.Free();
+  _file.Close();
+
   if (!info.Encrypted || !info.IsWinZipAes)
     return false;
-
-  const unsigned saltSize = AesSaltSize(info.AesStrength);
-  const unsigned keySize = AesKeySize(info.AesStrength);
-  const unsigned verifSize = 2;
-  const unsigned macSize = 10;
-  const UInt64 overhead = saltSize + verifSize + macSize;
-  if (info.CSize <= overhead)
+  if (info.AesStrength < 1 || info.AesStrength > 3)
     return false;
 
-  CReader r;
-  if (!r.Open(path))
+  _saltSize = AesSaltSize(info.AesStrength);
+  _keySize = AesKeySize(info.AesStrength);
+  const UInt64 overhead = _saltSize + 2 + 10;
+  if (info.CSize < overhead)
     return false;
 
-  Byte salt[16];
-  Byte verif[2];
-  if (!r.ReadAt(info.DataOffset, salt, saltSize))
+  if (!_file.Open(path))
     return false;
-  if (!r.ReadAt(info.DataOffset + saltSize, verif, verifSize))
+  if (!ReadFileAt(_file, info.DataOffset, _salt, _saltSize)
+      || !ReadFileAt(_file, info.DataOffset + _saltSize, _verif, 2)
+      || !ReadFileAt(_file, info.DataOffset + info.CSize - 10, _storedMac, 10))
+  {
+    _file.Close();
+    return false;
+  }
+
+  _info = info;
+  _cipherOffset = info.DataOffset + _saltSize + 2;
+  _cipherSize = info.CSize - overhead;
+
+  if (_cipherSize <= kMaxCacheCipher)
+  {
+    if (_cipherSize != 0)
+    {
+      _cachedCipher.Alloc((size_t)_cipherSize);
+      if (!ReadFileAt(_file, _cipherOffset, _cachedCipher, (size_t)_cipherSize))
+      {
+        _cachedCipher.Free();
+        _file.Close();
+        return false;
+      }
+    }
+    _hasCachedCipher = true;
+    _file.Close();
+  }
+
+  _ok = true;
+  return true;
+}
+
+bool CWinZipAesProbe::Check(const Byte *password, size_t passwordSize)
+{
+  if (!_ok)
     return false;
 
   Byte derived[2 * 32 + 2];
-  const size_t derivedSize = 2 * keySize + verifSize;
-  if (!Pbkdf2_HmacSha1(password, passwordSize, salt, saltSize, 1000, derived, derivedSize))
+  const size_t derivedSize = 2 * _keySize + 2;
+  if (!Pbkdf2_HmacSha1(password, passwordSize, _salt, _saltSize, 1000, derived, derivedSize))
     return false;
 
-  const bool verifOk = (derived[2 * keySize] == verif[0] && derived[2 * keySize + 1] == verif[1]);
+  const bool verifOk = (derived[2 * _keySize] == _verif[0] && derived[2 * _keySize + 1] == _verif[1]);
   if (!verifOk)
+  {
+    SecureZero(derived, sizeof(derived));
     return false;
-
-  // 16 bit is not enough on its own: authenticate the ciphertext with the MAC.
-  const UInt64 cipherSize = info.CSize - overhead;
-  if (cipherSize > ((UInt64)1 << 24))
-    return false; // too large for the MAC pass; the 16 bit check stands alone
-
-  const size_t bufSize = (size_t)cipherSize;
-  CByteBuffer buf(bufSize);
-  if (bufSize != 0 && !r.ReadAt(info.DataOffset + saltSize + verifSize, buf, bufSize))
-    return false;
+  }
 
   Byte mac[20];
-  if (!HmacSha1_Calc(derived + keySize, keySize, buf, bufSize, mac))
-    return false;
+  bool macOk = false;
+  if (_hasCachedCipher)
+  {
+    macOk = HmacSha1_Calc(derived + _keySize, _keySize,
+        (_cipherSize != 0) ? (const void *)(const Byte *)_cachedCipher : (const void *)"",
+        (size_t)_cipherSize, mac);
+  }
+  else
+  {
+    CHmacSha1Calc hmac;
+    if (hmac.Init(derived + _keySize, _keySize))
+    {
+      CByteBuffer chunk(1 << 16);
+      UInt64 remaining = _cipherSize;
+      UInt64 pos = _cipherOffset;
+      macOk = true;
+      while (remaining != 0)
+      {
+        const size_t todo = (remaining > chunk.Size()) ? chunk.Size() : (size_t)remaining;
+        if (!ReadFileAt(_file, pos, chunk, todo) || !hmac.Update(chunk, todo))
+        {
+          macOk = false;
+          break;
+        }
+        pos += todo;
+        remaining -= todo;
+      }
+      if (macOk)
+        macOk = hmac.Final(mac);
+    }
+  }
 
-  Byte stored[10];
-  if (!r.ReadAt(info.DataOffset + info.CSize - macSize, stored, macSize))
-    return false;
+  SecureZero(derived, sizeof(derived));
+  return macOk && memcmp(mac, _storedMac, 10) == 0;
+}
 
-  return memcmp(mac, stored, macSize) == 0;
+bool Verify_ZipCrypto(const FString &path, const CEntryInfo &info,
+    const Byte *password, size_t passwordSize)
+{
+  CZipCryptoProbe probe;
+  if (!probe.Init(path, info))
+    return false;
+  return probe.Check(password, passwordSize);
+}
+
+bool Verify_WinZipAes(const FString &path, const CEntryInfo &info,
+    const Byte *password, size_t passwordSize)
+{
+  CWinZipAesProbe probe;
+  if (!probe.Init(path, info))
+    return false;
+  return probe.Check(password, passwordSize);
 }
 
 }}

@@ -23,6 +23,9 @@ struct CSettings
   bool UseLocalDict;
   // Tell the user where the password came from after a successful lookup.
   bool ShowSource;
+  // Allow retrying HTTPS cloud requests over plain HTTP on TLS failure.
+  // Off by default to avoid silent downgrade attacks.
+  bool AllowHttpFallback;
 
   /*
     Per-provider budgets. A provider that runs out is skipped, not failed.

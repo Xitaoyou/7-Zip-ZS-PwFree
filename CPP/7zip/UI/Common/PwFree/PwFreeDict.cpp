@@ -11,16 +11,39 @@
 
 namespace NPwFree {
 
+struct CDictData
+{
+  volatile long RefCount;
+  UString Url;
+  CByteBuffer Text;
+
+  CDictData(): RefCount(1) {}
+  void AddRef() { ::InterlockedIncrement(&RefCount); }
+  void Release()
+  {
+    if (::InterlockedDecrement(&RefCount) == 0)
+      delete this;
+  }
+};
+
 namespace {
 
 const UInt64 kDictionarySizeLimit = (UInt64)32 << 20;
 const Byte kDesKey[8] = { 'D', 'E', 'S', 'K', 'e', 'y', 'E', 'n' };
 
-struct CDictEntry
+UInt64 NowMs()
 {
-  UString Url;
-  CByteBuffer Text;
-};
+#ifdef _WIN32
+  typedef ULONGLONG (WINAPI *PFN_GetTickCount64)(void);
+  static PFN_GetTickCount64 pfn = (PFN_GetTickCount64)(void *)::GetProcAddress(
+      ::GetModuleHandleW(L"kernel32.dll"), "GetTickCount64");
+  if (pfn)
+    return (UInt64)pfn();
+  return (UInt64)::GetTickCount();
+#else
+  return 0;
+#endif
+}
 
 /*
   The three quirks that made this worth writing down:
@@ -48,8 +71,17 @@ bool DecodeDictionary(const Byte *blob, size_t size, CByteBuffer &text)
   if (inner.Size() == 0)
     return false;
 
+  NPwCrypto::CDesEcbDecryptor des;
+  if (!des.Init(kDesKey))
+    return false;
+
   const char *p = (const char *)(const Byte *)inner;
   const size_t total = inner.Size();
+
+  // Pre-allocate with geometric growth to keep decoding O(N) instead of O(N^2).
+  size_t cap = (total >= 1024) ? total : 1024;
+  size_t used = 0;
+  text.Alloc(cap);
 
   for (size_t i = 0; i < total; )
   {
@@ -63,7 +95,7 @@ bool DecodeDictionary(const Byte *blob, size_t size, CByteBuffer &text)
       CByteBuffer block;
       if (NPwCrypto::Base64_Decode(p + i, lineSize, block)
           && block.Size() >= 8 && (block.Size() & 7) == 0
-          && NPwCrypto::Des_Ecb_Decrypt(kDesKey, block, block.Size()))
+          && des.Decrypt(block, block.Size()))
       {
         size_t plainSize = block.Size();
         const Byte pad = (plainSize != 0) ? ((const Byte *)block)[plainSize - 1] : 0;
@@ -89,11 +121,19 @@ bool DecodeDictionary(const Byte *blob, size_t size, CByteBuffer &text)
         }
         if (plainSize != 0)
         {
-          const size_t oldSize = text.Size();
-          text.ChangeSize_KeepData(oldSize + plainSize + 1, oldSize);
+          const size_t need = used + plainSize + 1;
+          if (need > cap)
+          {
+            size_t newCap = cap;
+            while (newCap < need)
+              newCap *= 2;
+            text.ChangeSize_KeepData(newCap, used);
+            cap = newCap;
+          }
           Byte *dst = text;
-          memcpy(dst + oldSize, (const Byte *)block, plainSize);
-          dst[oldSize + plainSize] = '\n';
+          memcpy(dst + used, (const Byte *)block, plainSize);
+          dst[used + plainSize] = '\n';
+          used = need;
         }
       }
     }
@@ -103,13 +143,25 @@ bool DecodeDictionary(const Byte *blob, size_t size, CByteBuffer &text)
       i++;
   }
 
-  return text.Size() != 0;
+  if (used == 0)
+  {
+    text.Free();
+    return false;
+  }
+  text.ChangeSize_KeepData(used, used);
+  return true;
 }
 
 class CDictStore
 {
 public:
-  CObjectVector<CDictEntry> Items;
+  CRecordVector<CDictData *> Items;
+  ~CDictStore()
+  {
+    FOR_VECTOR (i, Items)
+      Items[i]->Release();
+    Items.Clear();
+  }
 };
 
 CDictStore g_Store;
@@ -127,23 +179,67 @@ public:
 
 }
 
+CDictHandle::CDictHandle(const CDictHandle &other): _ptr(other._ptr)
+{
+  if (_ptr)
+    _ptr->AddRef();
+}
+
+CDictHandle &CDictHandle::operator=(const CDictHandle &other)
+{
+  if (this != &other)
+  {
+    if (other._ptr)
+      other._ptr->AddRef();
+    Reset();
+    _ptr = other._ptr;
+  }
+  return *this;
+}
+
+void CDictHandle::Attach(CDictData *p)
+{
+  Reset();
+  _ptr = p;
+}
+
+void CDictHandle::Reset()
+{
+  if (_ptr)
+  {
+    _ptr->Release();
+    _ptr = NULL;
+  }
+}
+
+const CByteBuffer *CDictHandle::Buffer() const
+{
+  return _ptr ? &_ptr->Text : NULL;
+}
+
 void Dict_Clear()
 {
   CStoreLock lock(g_StoreCS);
+  FOR_VECTOR (i, g_Store.Items)
+    g_Store.Items[i]->Release();
   g_Store.Items.Clear();
 }
 
-HRESULT LoadDict(const UString &url, UInt32 timeoutMs, UInt32 deadline,
-    const CByteBuffer *&text)
+HRESULT LoadDict(const UString &url, UInt32 timeoutMs, UInt64 deadline,
+    bool allowHttpFallback, volatile long *cancel, CDictHandle &out)
 {
-  text = NULL;
+  out.Reset();
+  if (cancel && *cancel != 0)
+    return E_ABORT;
+
   {
     CStoreLock lock(g_StoreCS);
     FOR_VECTOR (i, g_Store.Items)
     {
-      if (g_Store.Items[i].Url == url)
+      if (g_Store.Items[i]->Url == url)
       {
-        text = &g_Store.Items[i].Text;
+        g_Store.Items[i]->AddRef();
+        out.Attach(g_Store.Items[i]);
         return S_OK;
       }
     }
@@ -151,40 +247,46 @@ HRESULT LoadDict(const UString &url, UInt32 timeoutMs, UInt32 deadline,
 
   if (deadline != 0)
   {
-    const UInt32 now = (UInt32)::GetTickCount();
+    const UInt64 now = NowMs();
     if (now >= deadline)
       return S_FALSE;
-    const UInt32 left = deadline - now;
+    const UInt64 left = deadline - now;
     if (left < timeoutMs)
-      timeoutMs = left;
+      timeoutMs = (UInt32)left;
   }
   if (timeoutMs == 0)
     return S_FALSE;
 
-  AString body;
+  CByteBuffer body;
   UString errorText;
-  if (NPwHttp::Get(url, timeoutMs, body, errorText) != S_OK)
+  if (NPwHttp::GetBytes(url, timeoutMs, (size_t)kDictionarySizeLimit,
+      allowHttpFallback, body, errorText) != S_OK)
     return S_FALSE;
-  if (body.Len() == 0 || (UInt64)body.Len() > kDictionarySizeLimit)
+  if (body.Size() == 0 || (UInt64)body.Size() > kDictionarySizeLimit)
     return S_FALSE;
+  if (cancel && *cancel != 0)
+    return E_ABORT;
 
   CByteBuffer decoded;
-  if (!DecodeDictionary((const Byte *)(const char *)body, body.Len(), decoded))
+  if (!DecodeDictionary((const Byte *)body, body.Size(), decoded))
     return S_FALSE;
 
   CStoreLock lock(g_StoreCS);
   FOR_VECTOR (i, g_Store.Items)
   {
-    if (g_Store.Items[i].Url == url)
+    if (g_Store.Items[i]->Url == url)
     {
-      text = &g_Store.Items[i].Text;
+      g_Store.Items[i]->AddRef();
+      out.Attach(g_Store.Items[i]);
       return S_OK;
     }
   }
-  CDictEntry &e = g_Store.Items.AddNew();
-  e.Url = url;
-  e.Text = decoded;
-  text = &e.Text;
+  CDictData *entry = new CDictData();
+  entry->Url = url;
+  entry->Text = decoded;
+  g_Store.Items.Add(entry);
+  entry->AddRef();
+  out.Attach(entry);
   return S_OK;
 }
 

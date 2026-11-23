@@ -48,9 +48,9 @@ const size_t kMaxNextHeaderSize = (size_t)1 << 20;
 const size_t kMaxProbeData = (size_t)32 << 20;
 const size_t kMaxPayloadDecode = (size_t)1 << 20;
 const unsigned kMaxCoders = 4;
-const unsigned kMaxFolders = 16;
-const unsigned kMaxPackStreams = 64;
-const unsigned kMaxSubStreams = 4096;
+const unsigned kMaxFolders = 65536;
+const unsigned kMaxPackStreams = 65536;
+const unsigned kMaxSubStreams = 65536;
 const unsigned kMaxChunks = (unsigned)1 << 20;
 
 /* Reads the 7-Zip variable length integers and the record framing. */
@@ -291,8 +291,7 @@ bool ReadFolder(CMemReader &r, CStreams *streams, unsigned index)
 
   folder.NumOut = (unsigned)numOutStreams;
   folder.NumPackStreams = packedStreams;
-  // A probe only follows a folder that is fed by a single packed stream.
-  return packedStreams == 1;
+  return true;
 }
 
 /*
@@ -303,9 +302,10 @@ bool SkipSubStreams(CMemReader &r, unsigned numFolders)
 {
   if (numFolders > kMaxFolders)
     return false;
-  UInt64 counts[kMaxFolders];
+  CRecordVector<UInt64> counts;
+  counts.Reserve(numFolders);
   for (unsigned i = 0; i < numFolders; i++)
-    counts[i] = 1;
+    counts.Add(1);
 
   for (;;)
   {
@@ -350,9 +350,11 @@ bool SkipSubStreams(CMemReader &r, unsigned numFolders)
       }
       if (total > kMaxSubStreams)
         return false;
-      UInt64 crcs[kMaxSubStreams];
-      bool defined[kMaxSubStreams];
-      if (!ReadCrcs(r, (unsigned)total, crcs, defined))
+      CRecordVector<UInt64> crcs;
+      CRecordVector<bool> defined;
+      crcs.ClearAndSetSize((unsigned)total);
+      defined.ClearAndSetSize((unsigned)total);
+      if (total != 0 && !ReadCrcs(r, (unsigned)total, &crcs[0], &defined[0]))
         return false;
       continue;
     }
@@ -364,6 +366,7 @@ bool SkipSubStreams(CMemReader &r, unsigned numFolders)
 
 bool ParseStreams(CMemReader &r, CStreams *streams)
 {
+  streams->Clear();
   unsigned id;
   if (!r.ReadByte(id))
     return false;
@@ -377,7 +380,10 @@ bool ParseStreams(CMemReader &r, CStreams *streams)
       return false;
     if (count > kMaxPackStreams)
       return false;
-    streams->NumPackStreams = (unsigned)count;
+    const unsigned numPack = (unsigned)count;
+    streams->PackSizes.ClearAndSetSize(numPack);
+    for (unsigned i = 0; i < numPack; i++)
+      streams->PackSizes[i] = 0;
 
     for (;;)
     {
@@ -388,15 +394,17 @@ bool ParseStreams(CMemReader &r, CStreams *streams)
         break;
       if (pid == kId_Size)
       {
-        for (unsigned i = 0; i < streams->NumPackStreams; i++)
+        for (unsigned i = 0; i < numPack; i++)
           if (!r.Number(streams->PackSizes[i]))
             return false;
       }
       else if (pid == kId_CRC)
       {
-        UInt64 crcs[kMaxPackStreams];
-        bool defined[kMaxPackStreams];
-        if (!ReadCrcs(r, streams->NumPackStreams, crcs, defined))
+        CRecordVector<UInt64> crcs;
+        CRecordVector<bool> defined;
+        crcs.ClearAndSetSize(numPack);
+        defined.ClearAndSetSize(numPack);
+        if (numPack != 0 && !ReadCrcs(r, numPack, &crcs[0], &defined[0]))
           return false;
       }
       else if (!r.SkipProperty())
@@ -419,7 +427,7 @@ bool ParseStreams(CMemReader &r, CStreams *streams)
       return false;
     if (count > kMaxFolders)
       return false;
-    streams->NumFolders = (unsigned)count;
+    const unsigned numFolders = (unsigned)count;
 
     unsigned external;
     if (!r.ReadByte(external))
@@ -427,10 +435,10 @@ bool ParseStreams(CMemReader &r, CStreams *streams)
     if (external != 0)
       return false;
 
-    for (unsigned i = 0; i < streams->NumFolders; i++)
+    streams->Folders.ClearAndSetSize(numFolders);
+    for (unsigned i = 0; i < numFolders; i++)
     {
-      streams->Folders[i].CrcDefined = false;
-      streams->Folders[i].Crc = 0;
+      memset(&streams->Folders[i], 0, sizeof(CFolder));
       if (!ReadFolder(r, streams, i))
         return false;
     }
@@ -441,12 +449,17 @@ bool ParseStreams(CMemReader &r, CStreams *streams)
     if (idSize != kId_CodersUnpackSize)
       return false;
 
-    for (unsigned i = 0; i < streams->NumFolders; i++)
+    for (unsigned i = 0; i < numFolders; i++)
     {
       CFolder &folder = streams->Folders[i];
       for (unsigned k = 0; k < folder.NumOut; k++)
-        if (!r.Number(folder.UnpackSizes[k]))
+      {
+        UInt64 sz = 0;
+        if (!r.Number(sz))
           return false;
+        if (k < 4)
+          folder.UnpackSizes[k] = sz;
+      }
     }
 
     for (;;)
@@ -458,11 +471,13 @@ bool ParseStreams(CMemReader &r, CStreams *streams)
         break;
       if (prop == kId_CRC)
       {
-        UInt64 crcs[kMaxFolders];
-        bool defined[kMaxFolders];
-        if (!ReadCrcs(r, streams->NumFolders, crcs, defined))
+        CRecordVector<UInt64> crcs;
+        CRecordVector<bool> defined;
+        crcs.ClearAndSetSize(numFolders);
+        defined.ClearAndSetSize(numFolders);
+        if (numFolders != 0 && !ReadCrcs(r, numFolders, &crcs[0], &defined[0]))
           return false;
-        for (unsigned i = 0; i < streams->NumFolders; i++)
+        for (unsigned i = 0; i < numFolders; i++)
         {
           streams->Folders[i].CrcDefined = defined[i];
           streams->Folders[i].Crc = crcs[i];
@@ -478,7 +493,7 @@ bool ParseStreams(CMemReader &r, CStreams *streams)
 
   if (id == kId_SubStreamsInfo)
   {
-    if (!SkipSubStreams(r, streams->NumFolders))
+    if (!SkipSubStreams(r, streams->Folders.Size()))
       return false;
     if (!r.ReadByte(id))
       return false;
@@ -523,7 +538,6 @@ bool ValidateHeader(const Byte *data, size_t size)
     if (id == kId_AdditionalStreamsInfo || id == kId_MainStreamsInfo)
     {
       CStreams scratch;
-      memset(&scratch, 0, sizeof(scratch));
       if (!ParseStreams(r, &scratch))
         return false;
       if (id == kId_MainStreamsInfo)
@@ -662,6 +676,7 @@ UInt64 FindStartHeader(NFile::NIO::CInFile &file, UInt64 fileSize, Byte *start)
 
 CProbe::CProbe():
     _fileSize(0),
+    _baseOffset(0),
     _mode(0),
     _folderIndex(0),
     _saltSize(0),
@@ -675,7 +690,7 @@ CProbe::CProbe():
   memset(_iv, 0, sizeof(_iv));
   memset(_salt, 0, sizeof(_salt));
   memset(_block, 0, sizeof(_block));
-  memset(&_streams, 0, sizeof(_streams));
+  _streams.Clear();
 }
 
 CProbe::~CProbe()
@@ -793,7 +808,7 @@ bool CProbe::PlainByte(const Byte *key, UInt64 packOffset, UInt64 pos, unsigned 
 
 bool CProbe::PackRange(unsigned folderIndex, UInt64 &offset, UInt64 &size) const
 {
-  if (folderIndex >= _streams.NumFolders)
+  if (folderIndex >= _streams.Folders.Size())
     return false;
   const CFolder &folder = _streams.Folders[folderIndex];
   if (folder.NumPackStreams != 1)
@@ -802,17 +817,24 @@ bool CProbe::PackRange(unsigned folderIndex, UInt64 &offset, UInt64 &size) const
   UInt64 packIndex = 0;
   for (unsigned i = 0; i < folderIndex; i++)
     packIndex += _streams.Folders[i].NumPackStreams;
-  if (packIndex >= kMaxPackStreams || packIndex >= _streams.NumPackStreams)
+  if (packIndex >= _streams.PackSizes.Size())
     return false;
 
   // The header stores positions relative to the start header, which itself can
   // sit behind a self extracting stub.
+  if (_streams.PackPos > _fileSize || _baseOffset + kHeaderSize > _fileSize - _streams.PackPos)
+    return false;
   UInt64 packOffset = _baseOffset + kHeaderSize + _streams.PackPos;
   for (UInt64 i = 0; i < packIndex; i++)
-    packOffset += _streams.PackSizes[i];
+  {
+    const UInt64 sz = _streams.PackSizes[(unsigned)i];
+    if (sz > _fileSize - packOffset)
+      return false;
+    packOffset += sz;
+  }
   offset = packOffset;
-  size = _streams.PackSizes[packIndex];
-  return size != 0;
+  size = _streams.PackSizes[(unsigned)packIndex];
+  return size != 0 && size <= _fileSize - packOffset;
 }
 
 bool CProbe::WalkChunks(const Byte *key, UInt64 packOffset,
@@ -1013,9 +1035,10 @@ bool CProbe::CheckPayload(const Byte *key, UInt64 packOffset, UInt64 packSize)
   if (aesOut == 0 || aesOut > packSize)
     return false;
 
-  // A small folder that stores its CRC is verified exactly.
-  const UInt64 finalSize = folder.UnpackSizes[folder.NumOut - 1];
-  if (folder.CrcDefined && finalSize != 0 && finalSize <= kMaxPayloadDecode)
+  // A small 1-or-2 coder folder that stores its CRC is verified exactly.
+  const UInt64 finalSize = (folder.NumOut != 0 && folder.NumOut <= 4)
+      ? folder.UnpackSizes[folder.NumOut - 1] : 0;
+  if (folder.NumCoders <= 2 && folder.CrcDefined && finalSize != 0 && finalSize <= kMaxPayloadDecode)
   {
     CByteBuffer plain;
     UInt64 plainSize = 0;
@@ -1024,9 +1047,9 @@ bool CProbe::CheckPayload(const Byte *key, UInt64 packOffset, UInt64 packSize)
     return NPwCrypto::Crc32_Calc(plain, (size_t)plainSize) == (UInt32)folder.Crc;
   }
 
-  // Otherwise only a well formed LZMA2 chunk chain behind the AES coder is a
-  // usable signal; a bare AES stream cannot be told apart from random bytes.
-  if (folder.NumCoders != 2 || folder.Coders[1].Id != k_Lzma2)
+  // Otherwise an LZMA2 chunk chain immediately behind the AES coder (including
+  // 3-coder chains such as AES + LZMA2 + BCJ/Delta) is a strong signal.
+  if (folder.NumCoders < 2 || folder.Coders[1].Id != k_Lzma2)
     return false;
   const UInt64 out = folder.UnpackSizes[1];
   if (out == 0)
@@ -1044,28 +1067,38 @@ bool CProbe::CheckPayload(const Byte *key, UInt64 packOffset, UInt64 packSize)
 bool CProbe::SelectFolder()
 {
   _numCandidates = 0;
-  for (unsigned i = 0; i < _streams.NumFolders; i++)
+  const unsigned numFolders = _streams.Folders.Size();
+  for (unsigned i = 0; i < numFolders; i++)
   {
     const CFolder &folder = _streams.Folders[i];
-    if (folder.NumCoders == 0 || folder.NumCoders > kMaxCoders)
+    if (folder.NumCoders == 0 || folder.NumCoders > kMaxCoders || folder.NumPackStreams != 1)
       continue;
     const CCoder &coder = folder.Coders[0];
     if (coder.Id != k_Aes)
       continue;
-    if (coder.PropsSize < 2 || coder.PropsSize > 2 + 16 + 16)
+    if (coder.PropsSize < 1 || coder.PropsSize > 2 + 16 + 16)
       continue;
 
     const unsigned b0 = coder.Props[0];
-    const unsigned b1 = coder.Props[1];
     const unsigned power = b0 & 0x3F;
-    const unsigned saltSize = ((b0 >> 7) & 1) + (b1 >> 4);
-    const unsigned ivSize = ((b0 >> 6) & 1) + (b1 & 0x0F);
-    if (saltSize > 16 || ivSize != 16)
+    unsigned saltSize = 0;
+    unsigned ivSize = 0;
+    unsigned dataOff = 1;
+    if ((b0 & 0xC0) != 0)
+    {
+      if (coder.PropsSize < 2)
+        continue;
+      const unsigned b1 = coder.Props[1];
+      saltSize = ((b0 >> 7) & 1) + (b1 >> 4);
+      ivSize = ((b0 >> 6) & 1) + (b1 & 0x0F);
+      dataOff = 2;
+    }
+    // 7z trims trailing zero bytes from the IV, so ivSize can be 0..16.
+    if (saltSize > 16 || ivSize > 16)
       continue;
-    if (coder.PropsSize != 2 + saltSize + ivSize)
+    if (coder.PropsSize != dataOff + saltSize + ivSize)
       continue;
 
-    // Leave room for the folder that is currently selected.
     if (_numCandidates >= 4)
       break;
 
@@ -1074,9 +1107,11 @@ bool CProbe::SelectFolder()
     c.SaltSize = saltSize;
     c.Power = power;
     memset(c.Salt, 0, sizeof(c.Salt));
+    memset(c.Iv, 0, sizeof(c.Iv));
     if (saltSize != 0)
-      memcpy(c.Salt, coder.Props + 2, saltSize);
-    memcpy(c.Iv, coder.Props + 2 + saltSize, 16);
+      memcpy(c.Salt, coder.Props + dataOff, saltSize);
+    if (ivSize != 0)
+      memcpy(c.Iv, coder.Props + dataOff + saltSize, ivSize);
   }
   if (_numCandidates == 0)
     return false;
@@ -1128,7 +1163,6 @@ bool CProbe::Open_Header(const Byte *nextHeader, size_t nextHeaderSize)
     if (id == kId_AdditionalStreamsInfo)
     {
       CStreams scratch;
-      memset(&scratch, 0, sizeof(scratch));
       if (!ParseStreams(r, &scratch))
         return false;
       continue;
@@ -1205,6 +1239,10 @@ bool CProbe::Open(const FString &path)
 
   if (nextSize < 2 || nextSize > kMaxNextHeaderSize)
     return false;
+  if (_baseOffset > _fileSize - kHeaderSize)
+    return false;
+  if (nextOffset > _fileSize - _baseOffset - kHeaderSize)
+    return false;
 
   CByteBuffer buf;
   buf.Alloc((size_t)nextSize);
@@ -1253,14 +1291,16 @@ bool CProbe::Check(const Byte *password, size_t size)
   }
 
   Byte key[32];
-  const bool keyOk = DeriveKey(p, (size_t)len * 2, key);
-  NPwCrypto::SecureZero(p, (size_t)len * 2);
-  if (!keyOk)
-    return false;
+  bool haveKey = false;
+  unsigned lastSaltSize = 0;
+  unsigned lastPower = 0;
+  Byte lastSalt[16];
+  memset(lastSalt, 0, sizeof(lastSalt));
 
   /*
     A wrong pick among several encrypted folders would reject the right
-    password, so every candidate is tried until one confirms it.
+    password, so every candidate is tried until one confirms it. Re-derive
+    the key whenever a candidate folder uses a different salt or cycle count.
   */
   bool result = false;
   for (unsigned i = 0; i < _numCandidates && !result; i++)
@@ -1270,6 +1310,22 @@ bool CProbe::Check(const Byte *password, size_t size)
     UInt64 packSize = 0;
     if (!PackRange(_folderIndex, packOffset, packSize))
       continue;
+
+    const bool sameKdf = haveKey
+        && lastSaltSize == _saltSize
+        && lastPower == _numCyclesPower
+        && (_saltSize == 0 || memcmp(lastSalt, _salt, _saltSize) == 0);
+    if (!sameKdf)
+    {
+      if (!DeriveKey(p, (size_t)len * 2, key))
+        continue;
+      haveKey = true;
+      lastSaltSize = _saltSize;
+      lastPower = _numCyclesPower;
+      if (_saltSize != 0)
+        memcpy(lastSalt, _salt, _saltSize);
+    }
+
     _blockValid = false;
     try
     {
@@ -1282,6 +1338,7 @@ bool CProbe::Check(const Byte *password, size_t size)
       result = false;
     }
   }
+  NPwCrypto::SecureZero(p, (size_t)len * 2);
   if (!result && _numCandidates != 0)
     UseCandidate(0);
   NPwCrypto::SecureZero(key, sizeof(key));

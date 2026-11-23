@@ -14,6 +14,7 @@ static LPCTSTR const kVal_Enabled     = TEXT("Enabled");
 static LPCTSTR const kVal_UseCloud    = TEXT("UseCloud");
 static LPCTSTR const kVal_UseLocalDic = TEXT("UseLocalDict");
 static LPCTSTR const kVal_ShowSource  = TEXT("ShowSource");
+static LPCTSTR const kVal_HttpFallback = TEXT("AllowHttpFallback");
 static LPCTSTR const kVal_CloudBudget = TEXT("CloudBudgetMs");
 static LPCTSTR const kVal_DictBudget  = TEXT("DictBudgetMs");
 static LPCTSTR const kVal_MaskBudget  = TEXT("MaskBudgetMs");
@@ -25,6 +26,7 @@ CSettings::CSettings():
     UseCloud(true),
     UseLocalDict(true),
     ShowSource(true),
+    AllowHttpFallback(false),
     CloudBudgetMs(3000),
     DictBudgetMs(120000),
     // Off by default: a digits walk is only worth its time on a short numeric
@@ -44,6 +46,7 @@ void CSettings::Load()
   key.GetValue_bool_IfOk(kVal_UseCloud, UseCloud);
   key.GetValue_bool_IfOk(kVal_UseLocalDic, UseLocalDict);
   key.GetValue_bool_IfOk(kVal_ShowSource, ShowSource);
+  key.GetValue_bool_IfOk(kVal_HttpFallback, AllowHttpFallback);
   key.GetValue_UInt32_IfOk(kVal_CloudBudget, CloudBudgetMs);
   key.GetValue_UInt32_IfOk(kVal_DictBudget, DictBudgetMs);
   key.GetValue_UInt32_IfOk(kVal_MaskBudget, MaskBudgetMs);
@@ -59,6 +62,7 @@ void CSettings::Save() const
   key.SetValue(kVal_UseCloud, UseCloud);
   key.SetValue(kVal_UseLocalDic, UseLocalDict);
   key.SetValue(kVal_ShowSource, ShowSource);
+  key.SetValue(kVal_HttpFallback, AllowHttpFallback);
   key.SetValue(kVal_CloudBudget, CloudBudgetMs);
   key.SetValue(kVal_DictBudget, DictBudgetMs);
   key.SetValue(kVal_MaskBudget, MaskBudgetMs);

@@ -11,17 +11,17 @@ namespace {
 
 class CZipCryptoVerifier Z7_final: public IVerify
 {
-  FString _path;
-  NPwZip::CEntryInfo _info;
+  NPwZip::CZipCryptoProbe _probe;
   bool _ok;
 
 public:
-  CZipCryptoVerifier(const FString &path): _path(path), _ok(false)
+  CZipCryptoVerifier(const FString &path, const NPwZip::CEntryInfo &info): _ok(false)
   {
-    _ok = NPwZip::Read_Info(_path, _info) && _info.Encrypted && !_info.IsWinZipAes;
+    _ok = _probe.Init(path, info);
   }
 
-  unsigned CostClass() const { return 1; }
+  bool Available() const { return _ok; }
+  unsigned CostClass() const { return 0; }
   const char *Name() const { return "zipcrypto"; }
 
   bool Check(const Byte *password, size_t size)
@@ -30,7 +30,7 @@ public:
       return false;
     try
     {
-      return NPwZip::Verify_ZipCrypto(_path, _info, password, size);
+      return _probe.Check(password, size);
     }
     catch (...)
     {
@@ -41,16 +41,16 @@ public:
 
 class CWzAesVerifier Z7_final: public IVerify
 {
-  FString _path;
-  NPwZip::CEntryInfo _info;
+  NPwZip::CWinZipAesProbe _probe;
   bool _ok;
 
 public:
-  CWzAesVerifier(const FString &path): _path(path), _ok(false)
+  CWzAesVerifier(const FString &path, const NPwZip::CEntryInfo &info): _ok(false)
   {
-    _ok = NPwZip::Read_Info(_path, _info) && _info.Encrypted && _info.IsWinZipAes;
+    _ok = _probe.Init(path, info);
   }
 
+  bool Available() const { return _ok; }
   unsigned CostClass() const { return 1; }
   const char *Name() const { return "winzipaes"; }
 
@@ -60,7 +60,7 @@ public:
       return false;
     try
     {
-      return NPwZip::Verify_WinZipAes(_path, _info, password, size);
+      return _probe.Check(password, size);
     }
     catch (...)
     {
@@ -106,8 +106,19 @@ IVerify *CreateVerifier(const FString &arcPath, UInt32 formatIndex)
     if (NPwZip::Read_Info(arcPath, info) && info.Encrypted)
     {
       if (info.IsWinZipAes)
-        return new CWzAesVerifier(arcPath);
-      return new CZipCryptoVerifier(arcPath);
+      {
+        CWzAesVerifier *v = new CWzAesVerifier(arcPath, info);
+        if (v->Available())
+          return v;
+        delete v;
+      }
+      else
+      {
+        CZipCryptoVerifier *v = new CZipCryptoVerifier(arcPath, info);
+        if (v->Available())
+          return v;
+        delete v;
+      }
     }
 
     // 7z: the probe reports by itself whether the archive can be checked.

@@ -43,8 +43,8 @@ BEGIN
   MY_CONTROL_CHECKBOX ( "   ... report where the password came from", IDX_SETTINGS_PWFREE_SOURCE, m + 10, 268, xc - 10)
 
 #ifdef ZIP7_DARKMODE
-  LTEXT "Color Mode:", IDT_COLOR_MODE, m, save_y + 22 + 76, xc, 8
-  COMBOBOX IDC_COLOR_MODE, m, spin_y + 22 + 76, spin_x_size, 60, MY_COMBO
+  LTEXT "Color Mode:", IDT_COLOR_MODE, m, 284, xc, 8
+  COMBOBOX IDC_COLOR_MODE, m, 296, spin_x_size, 60, MY_COMBO
 #endif
 END
 

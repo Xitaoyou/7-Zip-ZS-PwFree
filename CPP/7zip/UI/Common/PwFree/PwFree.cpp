@@ -109,20 +109,16 @@ ESource SourceFromProviderName(const AString &name)
 
 }
 
-HRESULT Resolve(const CRequest &req, CAnswer &ans)
+static HRESULT ResolveWithSettings(const CRequest &req, const CSettings &st,
+    CAnswer &ans, volatile long *cancel)
 {
   ans.Clear();
 
-  if (!IsEnabled())
+  if (!st.Enabled)
     return S_FALSE;
   if (!req.ArcPath || req.ArcPath->IsEmpty())
     return S_FALSE;
 
-  /*
-    No verifier means the chain has nothing to check candidates against, and
-    an unverified password is worse than no password: it would be typed into
-    the archive and rejected. Report "no probe" and let the normal dialog run.
-  */
   IVerify *verify = CreateVerifier(*req.ArcPath, req.FormatIndex);
   if (!verify)
     return E_PWFREE_NOPROBE;
@@ -134,7 +130,7 @@ HRESULT Resolve(const CRequest &req, CAnswer &ans)
   HRESULT result;
   try
   {
-    result = RunChain(req, *verify, password, providerName, elapsedMs, NULL);
+    result = RunChain(req, st, *verify, password, providerName, elapsedMs, cancel);
   }
   catch (...)
   {
@@ -154,10 +150,16 @@ HRESULT Resolve(const CRequest &req, CAnswer &ans)
   ans.ProviderName = providerName;
   ans.ElapsedMs = elapsedMs;
 
-  // The file manager asks twice per operation; remember the answer.
-  Cache_Put(req, password);
+  if (ans.Source != kSrcCache)
+    Cache_Put(req, password);
 
   return S_OK;
+}
+
+HRESULT Resolve(const CRequest &req, CAnswer &ans, volatile long *cancel)
+{
+  const CSettings st = GetSettings();
+  return ResolveWithSettings(req, st, ans, cancel);
 }
 
 HRESULT FindPassword_ForArc(const UString &arcPath, bool headersEncrypted, UString &password)
@@ -169,8 +171,15 @@ HRESULT FindPassword_ForArc(const UString &arcPath, bool headersEncrypted, UStri
 HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
     UString &password, UString &note)
 {
+  return FindPassword_ForArc2(arcPath, headersEncrypted, password, note, NULL);
+}
+
+HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
+    UString &password, UString &note, volatile long *cancel)
+{
   note.Empty();
-  if (!IsEnabled())
+  const CSettings st = GetSettings();
+  if (!st.Enabled)
     return S_FALSE;
 
   try
@@ -186,24 +195,16 @@ HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
     req.HeadersEncrypted = headersEncrypted;
 
     CAnswer ans;
-    const HRESULT res = Resolve(req, ans);
+    const HRESULT res = ResolveWithSettings(req, st, ans, cancel);
     if (res == S_OK && !ans.Password.IsEmpty())
     {
       password = ans.Password;
-      /*
-        The source line answers "why does 7-Zip already know the password", so
-        it is only built when the user asked for it.
-      */
-      if (GetSettings().ShowSource)
+      if (st.ShowSource)
       {
         note = L"PwFree: password from ";
         const char *text = GetSourceText(ans.Source);
         for (; *text != 0; text++)
           note += (wchar_t)(unsigned char)*text;
-        /*
-          The provider name repeats the source for the local providers, so it is
-          only worth showing when it adds a distinct name (a cloud service).
-        */
         const char *raw = GetSourceName(ans.Source);
         const char *prov = ans.ProviderName.Ptr();
         bool same = true;
@@ -229,6 +230,8 @@ HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
       return S_OK;
     }
     ans.Clear();
+    if (res == E_ABORT)
+      return E_ABORT;
   }
   catch (...)
   {

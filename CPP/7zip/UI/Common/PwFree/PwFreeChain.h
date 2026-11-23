@@ -7,6 +7,7 @@
 #include "../../../../Common/MyString.h"
 
 #include "PwFree.h"
+#include "PwFreeSettings.h"
 #include "PwFreeVerify.h"
 
 /*
@@ -49,9 +50,9 @@ public:
 
 IProvider *CreateSeedProvider(const CRequest &req);
 IProvider *CreateCacheProvider(const CRequest &req);
-IProvider *CreateDictProvider(const CRequest &req);
-IProvider *CreateCloudProvider(const CRequest &req);
-IProvider *CreateMaskProvider(const CRequest &req);
+IProvider *CreateDictProvider(const CRequest &req, const CSettings &st, volatile long *cancel);
+IProvider *CreateCloudProvider(const CRequest &req, const CSettings &st, volatile long *cancel);
+IProvider *CreateMaskProvider(const CRequest &req, const CSettings &st);
 
 /*
   Runs the providers in cost order against 'verify'.
@@ -60,8 +61,8 @@ IProvider *CreateMaskProvider(const CRequest &req);
   when *cancel became non-zero. 'providerName' receives the provider id of the
   hit. 'elapsedMs' receives the wall time of the whole run.
 */
-HRESULT RunChain(const CRequest &req, IVerify &verify, UString &password,
-    AString &providerName, unsigned &elapsedMs, volatile long *cancel);
+HRESULT RunChain(const CRequest &req, const CSettings &st, IVerify &verify,
+    UString &password, AString &providerName, unsigned &elapsedMs, volatile long *cancel);
 
 }
 

@@ -37,12 +37,12 @@ class CCloudLookup
   UString _providerName;
   UString _lastError;
 
-  bool Fetch(UInt32 timeoutMs);
+  bool Fetch(UInt32 timeoutMs, bool allowHttpFallback, volatile long *cancel);
 
 public:
   explicit CCloudLookup(const FString &arcPath);
   // S_OK when at least one candidate was collected.
-  HRESULT Query(UInt32 timeoutMs);
+  HRESULT Query(UInt32 timeoutMs, bool allowHttpFallback = false, volatile long *cancel = NULL);
   // S_FALSE when exhausted.
   HRESULT Next(UString &password);
   const UString &GetProviderName() const { return _providerName; }

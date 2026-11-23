@@ -6,6 +6,7 @@
 #include "../../../../Common/Common.h"
 #include "../../../../Common/MyBuffer.h"
 #include "../../../../Common/MyString.h"
+#include "../../../../Common/MyVector.h"
 #include "../../../../Windows/FileIO.h"
 
 /*
@@ -57,10 +58,16 @@ struct CFolder
 struct CStreams
 {
   UInt64 PackPos;
-  unsigned NumPackStreams;
-  UInt64 PackSizes[64];
-  unsigned NumFolders;
-  CFolder Folders[16];
+  CRecordVector<UInt64> PackSizes;
+  CRecordVector<CFolder> Folders;
+
+  CStreams(): PackPos(0) {}
+  void Clear()
+  {
+    PackPos = 0;
+    PackSizes.Clear();
+    Folders.Clear();
+  }
 };
 
 /*

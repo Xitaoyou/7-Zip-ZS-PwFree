@@ -97,8 +97,9 @@ static void AddError(AString &errorText, const char *tag, DWORD code)
 }
 
 static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
-    AString &body, UString &errorText)
+    size_t maxBytes, CByteBuffer &body, UString &errorText)
 {
+  body.Free();
   HINTERNET session = ::WinHttpOpen(L"7-Zip-PwFree/1.0",
       WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -137,8 +138,9 @@ static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
   }
 
   DWORD secureFailure = 0;
+  DWORD_PTR contextVal = (DWORD_PTR)&secureFailure;
   AString temp;
-  ::WinHttpSetOption(request, WINHTTP_OPTION_CONTEXT_VALUE, &secureFailure, sizeof(secureFailure));
+  ::WinHttpSetOption(request, WINHTTP_OPTION_CONTEXT_VALUE, &contextVal, sizeof(contextVal));
   ::WinHttpSetStatusCallback(request, StatusCallback, WINHTTP_CALLBACK_FLAG_SECURE_FAILURE, 0);
 
   ::SetLastError(0);
@@ -165,23 +167,63 @@ static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
         WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &size, WINHTTP_NO_HEADER_INDEX)
         && statusCode == 200)
     {
-      CByteBuffer buf(4096);
+      size_t cap = 4096;
+      if (maxBytes < cap)
+        cap = maxBytes;
+      CByteBuffer buf(cap);
       size_t used = 0;
+      bool readOk = true;
       for (;;)
       {
         DWORD avail = 0;
-        if (!::WinHttpQueryDataAvailable(request, &avail) || avail == 0)
+        if (!::WinHttpQueryDataAvailable(request, &avail))
+        {
+          AddError(temp, "avail", ::GetLastError());
+          readOk = false;
           break;
-        if (used + avail > ((size_t)1 << 20))
-          break; // never read more than 1 MB from one endpoint
-        buf.ChangeSize_KeepData(used + avail, used);
+        }
+        if (avail == 0)
+          break;
+        if ((size_t)avail > maxBytes - used)
+        {
+          AddError(temp, "limit", (DWORD)avail);
+          readOk = false;
+          break;
+        }
+        if (used + avail > cap)
+        {
+          size_t newCap = cap;
+          while (newCap < used + avail)
+          {
+            if (newCap >= maxBytes / 2)
+            {
+              newCap = maxBytes;
+              break;
+            }
+            newCap *= 2;
+          }
+          if (newCap < used + avail)
+            newCap = used + avail;
+          buf.ChangeSize_KeepData(newCap, used);
+          cap = newCap;
+        }
         DWORD read = 0;
-        if (!::WinHttpReadData(request, (Byte *)buf + used, avail, &read) || read == 0)
+        if (!::WinHttpReadData(request, (Byte *)buf + used, avail, &read))
+        {
+          AddError(temp, "read", ::GetLastError());
+          readOk = false;
+          break;
+        }
+        if (read == 0)
           break;
         used += read;
       }
-      body.SetFrom((const char *)(const Byte *)buf, (unsigned)used);
-      result = S_OK;
+      if (readOk)
+      {
+        buf.ChangeSize_KeepData(used, used);
+        body = buf;
+        result = S_OK;
+      }
     }
     else
       AddError(temp, "status", statusCode);
@@ -193,16 +235,24 @@ static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
   if (result != S_OK)
     errorText = GetUnicodeString(temp);
 
+  ::WinHttpSetStatusCallback(request, NULL, WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, 0);
   ::WinHttpCloseHandle(request);
   ::WinHttpCloseHandle(connect);
   ::WinHttpCloseHandle(session);
   return result;
 }
 
-HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body, UString &errorText)
+HRESULT GetBytes(const UString &url, UInt32 timeoutMs, size_t maxBytes,
+    bool allowHttpFallback, CByteBuffer &body, UString &errorText)
 {
-  body.Empty();
+  body.Free();
   errorText.Empty();
+
+  if (maxBytes == 0)
+  {
+    errorText = L"zero limit";
+    return S_FALSE;
+  }
 
   CUrlParts parts;
   if (!ParseUrl(url, parts))
@@ -211,12 +261,11 @@ HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body, UString &errorT
     return S_FALSE;
   }
 
-  HRESULT result = FetchOnce(parts, timeoutMs, body, errorText);
-  if (result == S_OK || !parts.Https)
+  HRESULT result = FetchOnce(parts, timeoutMs, maxBytes, body, errorText);
+  if (result == S_OK || !parts.Https || !allowHttpFallback)
     return result;
 
-  // The vendor hosts serve the same JSON over plain HTTP, and some machines
-  // do not have the current TLS intermediate installed. Retry over HTTP.
+  // Optional fallback to plain HTTP when explicitly enabled in settings.
   UString fallback = L"http://";
   fallback += parts.Host;
   if (parts.Port != 80 && parts.Port != 443)
@@ -233,8 +282,8 @@ HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body, UString &errorT
     return result;
 
   UString httpError;
-  AString httpBody;
-  const HRESULT httpResult = FetchOnce(httpParts, timeoutMs, httpBody, httpError);
+  CByteBuffer httpBody;
+  const HRESULT httpResult = FetchOnce(httpParts, timeoutMs, maxBytes, httpBody, httpError);
   if (httpResult == S_OK)
   {
     body = httpBody;
@@ -244,11 +293,34 @@ HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body, UString &errorT
   return result;
 }
 
+HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body,
+    UString &errorText, bool allowHttpFallback)
+{
+  body.Empty();
+  CByteBuffer raw;
+  const HRESULT res = GetBytes(url, timeoutMs, (size_t)1 << 20, allowHttpFallback, raw, errorText);
+  if (res != S_OK)
+    return res;
+  if (raw.Size() != 0)
+    body.SetFrom((const char *)(const Byte *)raw, (unsigned)raw.Size());
+  return S_OK;
+}
+
 #else
 
-HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body, UString &errorText)
+HRESULT GetBytes(const UString &url, UInt32 timeoutMs, size_t maxBytes,
+    bool allowHttpFallback, CByteBuffer &body, UString &errorText)
 {
-  UNUSED_VAR(url) UNUSED_VAR(timeoutMs)
+  UNUSED_VAR(url) UNUSED_VAR(timeoutMs) UNUSED_VAR(maxBytes) UNUSED_VAR(allowHttpFallback)
+  body.Free();
+  errorText = L"not supported";
+  return S_FALSE;
+}
+
+HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body,
+    UString &errorText, bool allowHttpFallback)
+{
+  UNUSED_VAR(url) UNUSED_VAR(timeoutMs) UNUSED_VAR(allowHttpFallback)
   body.Empty();
   errorText = L"not supported";
   return S_FALSE;

@@ -147,22 +147,29 @@ class COutWindow
   size_t _pos;
 
   CByteBuffer *_grow;
-  CByteBuffer _own;
+  size_t _maxGrowSize;
 
 public:
-  COutWindow(Byte *buf, size_t size): _fixed(buf), _fixedSize(size), _pos(0), _grow(NULL) {}
+  COutWindow(Byte *buf, size_t size):
+      _fixed(buf), _fixedSize(size), _pos(0), _grow(NULL), _maxGrowSize(0) {}
 
-  explicit COutWindow(CByteBuffer &grow):
-      _fixed(NULL), _fixedSize(0), _pos(0), _grow(&grow) {}
+  COutWindow(CByteBuffer &grow, size_t maxGrowSize):
+      _fixed(NULL), _fixedSize(0), _pos(0), _grow(&grow), _maxGrowSize(maxGrowSize) {}
 
   bool PutByte(Byte b)
   {
     if (_grow)
     {
+      if (_pos >= _maxGrowSize)
+        return false;
       if (_pos >= _grow->Size())
       {
         const size_t oldSize = _grow->Size();
-        const size_t newSize = (oldSize == 0) ? (size_t)(1 << 16) : (oldSize * 2);
+        size_t newSize = (oldSize == 0) ? (size_t)(1 << 16) : (oldSize * 2);
+        if (newSize > _maxGrowSize)
+          newSize = _maxGrowSize;
+        if (newSize <= _pos)
+          return false;
         _grow->ChangeSize_KeepData(newSize, oldSize);
       }
       Byte *p = *_grow;
@@ -410,10 +417,12 @@ bool Inflate_Raw(const Byte *in, size_t inSize, Byte *out, size_t outSize)
   return w.Pos() == outSize;
 }
 
-bool Inflate_Raw_Grow(const Byte *in, size_t inSize, CByteBuffer &out)
+bool Inflate_Raw_Grow(const Byte *in, size_t inSize, CByteBuffer &out, size_t maxOutSize)
 {
   out.Free();
-  COutWindow w(out);
+  if (maxOutSize == 0)
+    return false;
+  COutWindow w(out, maxOutSize);
   if (!InflateImpl(in, inSize, w))
     return false;
   w.ShrinkToPos();

@@ -23,8 +23,10 @@ namespace NPwInflate {
 // outSize must be the exact expected size; returns false on any error.
 bool Inflate_Raw(const Byte *in, size_t inSize, Byte *out, size_t outSize);
 
-// Unknown output size: 'out' grows as needed. Returns false on corruption.
-bool Inflate_Raw_Grow(const Byte *in, size_t inSize, CByteBuffer &out);
+// Unknown output size: 'out' grows as needed up to 'maxOutSize'.
+// Returns false on corruption or if output exceeds 'maxOutSize'.
+bool Inflate_Raw_Grow(const Byte *in, size_t inSize, CByteBuffer &out,
+    size_t maxOutSize = (size_t)64 << 20);
 
 }}
 

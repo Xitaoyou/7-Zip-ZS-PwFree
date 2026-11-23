@@ -59,8 +59,36 @@ bool IsNoise(const AString &value)
   return false;
 }
 
-// Appends the 4 hex digits at 'p' as a Unicode escape; returns false on a
-// malformed sequence.
+static void AppendUtf8CodePoint(AString &dst, unsigned cp)
+{
+  if (cp < 0x80)
+  {
+    dst.Add_Char((char)cp);
+  }
+  else if (cp < 0x800)
+  {
+    dst.Add_Char((char)(0xC0 | (cp >> 6)));
+    dst.Add_Char((char)(0x80 | (cp & 0x3F)));
+  }
+  else if (cp < 0x10000)
+  {
+    dst.Add_Char((char)(0xE0 | (cp >> 12)));
+    dst.Add_Char((char)(0x80 | ((cp >> 6) & 0x3F)));
+    dst.Add_Char((char)(0x80 | (cp & 0x3F)));
+  }
+  else if (cp <= 0x10FFFF)
+  {
+    dst.Add_Char((char)(0xF0 | (cp >> 18)));
+    dst.Add_Char((char)(0x80 | ((cp >> 12) & 0x3F)));
+    dst.Add_Char((char)(0x80 | ((cp >> 6) & 0x3F)));
+    dst.Add_Char((char)(0x80 | (cp & 0x3F)));
+  }
+}
+
+static bool IsMetaKey(const AString &key)
+{
+  return key == "code" || key == "status" || key == "errno" || key == "ret";
+}
 bool ParseHex4(const char *p, size_t size, unsigned &value)
 {
   if (size < 4)
@@ -147,31 +175,35 @@ void ScanJson(const AString &body, int &code, UStringVector &values)
             unsigned cp = 0;
             if (ParseHex4(p + m + 2, size - (m + 2), cp))
             {
-              // Re-encode as UTF-8 so the rest of the module only sees UTF-8.
-              Byte utf8[4];
-              unsigned n = 0;
-              if (cp < 0x80)
-              {
-                utf8[n++] = (Byte)cp;
-              }
-              else if (cp < 0x800)
-              {
-                utf8[n++] = (Byte)(0xC0 | (cp >> 6));
-                utf8[n++] = (Byte)(0x80 | (cp & 0x3F));
-              }
-              else
-              {
-                utf8[n++] = (Byte)(0xE0 | (cp >> 12));
-                utf8[n++] = (Byte)(0x80 | ((cp >> 6) & 0x3F));
-                utf8[n++] = (Byte)(0x80 | (cp & 0x3F));
-              }
-              for (unsigned q = 0; q < n; q++)
-                value.Add_Char((char)utf8[q]);
               m += 5;
+              // Combine UTF-16 surrogate pairs when present.
+              if (cp >= 0xD800 && cp <= 0xDBFF
+                  && m + 6 < size && p[m + 1] == '\\' && p[m + 2] == 'u')
+              {
+                unsigned lo = 0;
+                if (ParseHex4(p + m + 3, size - (m + 3), lo)
+                    && lo >= 0xDC00 && lo <= 0xDFFF)
+                {
+                  cp = 0x10000u + (((cp - 0xD800u) << 10) | (lo - 0xDC00u));
+                  m += 6;
+                }
+              }
+              AppendUtf8CodePoint(value, cp);
               continue;
             }
           }
-          value.Add_Char(e);
+          switch (e)
+          {
+            case '"':  value.Add_Char('"'); break;
+            case '\\': value.Add_Char('\\'); break;
+            case '/':  value.Add_Char('/'); break;
+            case 'b':  value.Add_Char('\b'); break;
+            case 'f':  value.Add_Char('\f'); break;
+            case 'n':  value.Add_Char('\n'); break;
+            case 'r':  value.Add_Char('\r'); break;
+            case 't':  value.Add_Char('\t'); break;
+            default:   value.Add_Char(e); break;
+          }
           m++;
           continue;
         }
@@ -198,9 +230,12 @@ void ScanJson(const AString &body, int &code, UStringVector &values)
             code = code * 10 + (c - '0');
           }
         }
-        UString u;
-        if (Convert_UTF8_Buf_To_Unicode(value, value.Len(), u) && !u.IsEmpty())
-          values.Add(u);
+        else if (!IsMetaKey(key))
+        {
+          UString u;
+          if (Convert_UTF8_Buf_To_Unicode(value, value.Len(), u) && !u.IsEmpty())
+            values.Add(u);
+        }
       }
       i = m;
       continue;
@@ -240,10 +275,13 @@ CCloudLookup::CCloudLookup(const FString &arcPath):
 {
 }
 
-bool CCloudLookup::Fetch(UInt32 timeoutMs)
+bool CCloudLookup::Fetch(UInt32 timeoutMs, bool allowHttpFallback, volatile long *cancel)
 {
+  if (cancel && *cancel != 0)
+    return false;
+
   AString md5;
-  if (!NPwZip::FileMd5_Hex(_arcPath, md5))
+  if (!NPwZip::FileMd5_Hex(_arcPath, md5, cancel))
   {
     _lastError = L"fingerprint failed";
     return false;
@@ -252,12 +290,15 @@ bool CCloudLookup::Fetch(UInt32 timeoutMs)
   const char *urls[2] = { kYunUrl, kCheckUrl };
   for (unsigned u = 0; u < 2 && !_ok; u++)
   {
+    if (cancel && *cancel != 0)
+      break;
+
     UString url = GetUnicodeString(urls[u]);
     url += GetUnicodeString(md5);
 
     AString body;
     UString errorText;
-    if (NPwHttp::Get(url, timeoutMs, body, errorText) != S_OK)
+    if (NPwHttp::Get(url, timeoutMs, body, errorText, allowHttpFallback) != S_OK)
     {
       _lastError = errorText;
       continue;
@@ -291,12 +332,12 @@ bool CCloudLookup::Fetch(UInt32 timeoutMs)
   return _ok;
 }
 
-HRESULT CCloudLookup::Query(UInt32 timeoutMs)
+HRESULT CCloudLookup::Query(UInt32 timeoutMs, bool allowHttpFallback, volatile long *cancel)
 {
   if (!_tried)
   {
     _tried = true;
-    Fetch(timeoutMs);
+    Fetch(timeoutMs, allowHttpFallback, cancel);
   }
   return _ok ? S_OK : S_FALSE;
 }

@@ -53,6 +53,24 @@ public:
 bool HmacSha1_Calc(const Byte *key, size_t keySize,
     const void *data, size_t size, Byte *digest);
 
+// Streaming HMAC-SHA1 for large WinZip AES entries without loading all data in RAM.
+class CHmacSha1Calc
+{
+  bool _ok;
+#ifdef _WIN32
+  void *_hash;
+#endif
+  CHmacSha1Calc(const CHmacSha1Calc &) = delete;
+  CHmacSha1Calc &operator=(const CHmacSha1Calc &) = delete;
+
+public:
+  CHmacSha1Calc();
+  ~CHmacSha1Calc();
+  bool Init(const Byte *key, size_t keySize);
+  bool Update(const void *data, size_t size);
+  bool Final(Byte *digest);
+};
+
 bool Pbkdf2_HmacSha1(const Byte *password, size_t passwordSize,
     const Byte *salt, size_t saltSize,
     UInt32 numIterations, Byte *key, size_t keySize);
@@ -60,6 +78,23 @@ bool Pbkdf2_HmacSha1(const Byte *password, size_t passwordSize,
 /* ---- DES-ECB (the vendor password dictionary is DES-ECB "DESKeyEn") ---- */
 
 bool Des_Ecb_Decrypt(const Byte *key8, Byte *data, size_t size);
+
+// Reusable DES-ECB key context to avoid re-opening CNG handles per dictionary line.
+class CDesEcbDecryptor
+{
+  bool _ok;
+#ifdef _WIN32
+  void *_key;
+#endif
+  CDesEcbDecryptor(const CDesEcbDecryptor &) = delete;
+  CDesEcbDecryptor &operator=(const CDesEcbDecryptor &) = delete;
+
+public:
+  CDesEcbDecryptor();
+  ~CDesEcbDecryptor();
+  bool Init(const Byte *key8);
+  bool Decrypt(Byte *data, size_t size) const;
+};
 
 /* ---- AES (WinZip AES / 7z AES) ---- */
 

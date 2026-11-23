@@ -4,6 +4,7 @@
 
 #ifdef _WIN32
 #include <bcrypt.h>
+#include "../../../../Windows/Synchronization.h"
 #endif
 
 namespace NPwFree {
@@ -44,23 +45,40 @@ UInt32 Crc32_Calc(const void *data, size_t size)
 
 /* ---------------- bcrypt helpers ---------------- */
 
-class CAlgProvider
+// Shared process-lifetime algorithm handles: CNG algorithm providers are
+// thread-safe once opened, so caching them avoids thousands of opens/closes
+// per second during password verification.
+struct CCachedAlg
 {
-  BCRYPT_ALG_HANDLE _handle;
-
-  CAlgProvider(const CAlgProvider &) = delete;
-  CAlgProvider &operator=(const CAlgProvider &) = delete;
-
-public:
-  CAlgProvider(): _handle(NULL) {}
-  ~CAlgProvider() { if (_handle) BCryptCloseAlgorithmProvider(_handle, 0); }
-
-  bool Open(LPCWSTR algId, ULONG flags)
-  {
-    return BCryptOpenAlgorithmProvider(&_handle, algId, NULL, flags) >= 0;
-  }
-  BCRYPT_ALG_HANDLE Handle() const { return _handle; }
+  BCRYPT_ALG_HANDLE Handle;
+  bool Tried;
+  LPCWSTR AlgId;
+  ULONG Flags;
 };
+
+static NWindows::NSynchronization::CCriticalSection g_AlgCS;
+
+static BCRYPT_ALG_HANDLE GetCachedAlg(CCachedAlg &a)
+{
+  if (a.Tried)
+    return a.Handle;
+  g_AlgCS.Enter();
+  if (!a.Tried)
+  {
+    BCRYPT_ALG_HANDLE h = NULL;
+    if (BCryptOpenAlgorithmProvider(&h, a.AlgId, NULL, a.Flags) >= 0)
+      a.Handle = h;
+    a.Tried = true;
+  }
+  g_AlgCS.Leave();
+  return a.Handle;
+}
+
+static CCachedAlg g_AlgMd5      = { NULL, false, BCRYPT_MD5_ALGORITHM, 0 };
+static CCachedAlg g_AlgSha1Hmac = { NULL, false, BCRYPT_SHA1_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG };
+static CCachedAlg g_AlgSha256   = { NULL, false, BCRYPT_SHA256_ALGORITHM, 0 };
+static CCachedAlg g_AlgAes      = { NULL, false, BCRYPT_AES_ALGORITHM, 0 };
+static CCachedAlg g_AlgDes      = { NULL, false, BCRYPT_DES_ALGORITHM, 0 };
 
 class CHashHandle
 {
@@ -75,6 +93,8 @@ public:
 
   bool Create(BCRYPT_ALG_HANDLE alg, const Byte *secret, size_t secretSize)
   {
+    if (!alg)
+      return false;
     return BCryptCreateHash(alg, &_handle, NULL, 0,
         (PUCHAR)secret, (ULONG)secretSize, 0) >= 0;
   }
@@ -90,15 +110,14 @@ public:
   }
 };
 
-static bool Hash_Calc(LPCWSTR algId, ULONG flags,
+static bool Hash_Calc(BCRYPT_ALG_HANDLE alg,
     const Byte *secret, size_t secretSize,
     const void *data, size_t size, Byte *digest, size_t digestSize)
 {
-  CAlgProvider prov;
-  if (!prov.Open(algId, flags))
+  if (!alg)
     return false;
   CHashHandle hash;
-  if (!hash.Create(prov.Handle(), secret, secretSize))
+  if (!hash.Create(alg, secret, secretSize))
     return false;
   if (!hash.Add(data, size))
     return false;
@@ -112,7 +131,7 @@ static bool Hash_Calc(LPCWSTR algId, ULONG flags,
 bool Md5_Calc(const void *data, size_t size, Byte *digest)
 {
 #ifdef _WIN32
-  return Hash_Calc(BCRYPT_MD5_ALGORITHM, 0, NULL, 0, data, size, digest, 16);
+  return Hash_Calc(GetCachedAlg(g_AlgMd5), NULL, 0, data, size, digest, 16);
 #else
   UNUSED_VAR(data)
   UNUSED_VAR(size)
@@ -126,16 +145,12 @@ CMd5Calc::CMd5Calc(): _ok(false)
 #ifdef _WIN32
   _alg = NULL;
   _hash = NULL;
-  BCRYPT_ALG_HANDLE alg = NULL;
-  if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_MD5_ALGORITHM, NULL, 0) < 0)
+  BCRYPT_ALG_HANDLE alg = GetCachedAlg(g_AlgMd5);
+  if (!alg)
     return;
   BCRYPT_HASH_HANDLE hash = NULL;
   if (BCryptCreateHash(alg, &hash, NULL, 0, NULL, 0, 0) < 0)
-  {
-    BCryptCloseAlgorithmProvider(alg, 0);
     return;
-  }
-  _alg = alg;
   _hash = hash;
   _ok = true;
 #endif
@@ -146,8 +161,6 @@ CMd5Calc::~CMd5Calc()
 #ifdef _WIN32
   if (_hash)
     BCryptDestroyHash((BCRYPT_HASH_HANDLE)_hash);
-  if (_alg)
-    BCryptCloseAlgorithmProvider((BCRYPT_ALG_HANDLE)_alg, 0);
 #endif
 }
 
@@ -182,13 +195,76 @@ bool HmacSha1_Calc(const Byte *key, size_t keySize,
     const void *data, size_t size, Byte *digest)
 {
 #ifdef _WIN32
-  return Hash_Calc(BCRYPT_SHA1_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG,
-      key, keySize, data, size, digest, 20);
+  return Hash_Calc(GetCachedAlg(g_AlgSha1Hmac), key, keySize, data, size, digest, 20);
 #else
   UNUSED_VAR(key)
   UNUSED_VAR(keySize)
   UNUSED_VAR(data)
   UNUSED_VAR(size)
+  UNUSED_VAR(digest)
+  return false;
+#endif
+}
+
+CHmacSha1Calc::CHmacSha1Calc(): _ok(false)
+{
+#ifdef _WIN32
+  _hash = NULL;
+#endif
+}
+
+CHmacSha1Calc::~CHmacSha1Calc()
+{
+#ifdef _WIN32
+  if (_hash)
+    BCryptDestroyHash((BCRYPT_HASH_HANDLE)_hash);
+#endif
+}
+
+bool CHmacSha1Calc::Init(const Byte *key, size_t keySize)
+{
+#ifdef _WIN32
+  if (_hash)
+  {
+    BCryptDestroyHash((BCRYPT_HASH_HANDLE)_hash);
+    _hash = NULL;
+  }
+  _ok = false;
+  BCRYPT_ALG_HANDLE alg = GetCachedAlg(g_AlgSha1Hmac);
+  if (!alg)
+    return false;
+  BCRYPT_HASH_HANDLE hash = NULL;
+  if (BCryptCreateHash(alg, &hash, NULL, 0, (PUCHAR)key, (ULONG)keySize, 0) < 0)
+    return false;
+  _hash = hash;
+  _ok = true;
+  return true;
+#else
+  UNUSED_VAR(key) UNUSED_VAR(keySize)
+  return false;
+#endif
+}
+
+bool CHmacSha1Calc::Update(const void *data, size_t size)
+{
+#ifdef _WIN32
+  if (!_ok || size == 0)
+    return _ok;
+  return BCryptHashData((BCRYPT_HASH_HANDLE)_hash, (PUCHAR)data, (ULONG)size, 0) >= 0;
+#else
+  UNUSED_VAR(data) UNUSED_VAR(size)
+  return false;
+#endif
+}
+
+bool CHmacSha1Calc::Final(Byte *digest)
+{
+#ifdef _WIN32
+  if (!_ok)
+    return false;
+  _ok = false;
+  return BCryptFinishHash((BCRYPT_HASH_HANDLE)_hash, digest, 20, 0) >= 0;
+#else
   UNUSED_VAR(digest)
   return false;
 #endif
@@ -200,78 +276,104 @@ bool Pbkdf2_HmacSha1(const Byte *password, size_t passwordSize,
 {
   if (numIterations == 0 || keySize == 0)
     return false;
-
-  Byte u[20];
-  Byte t[20];
-
-  Byte saltBuf[64];
-  if (saltSize > sizeof(saltBuf) - 4)
+#ifdef _WIN32
+  BCRYPT_ALG_HANDLE alg = GetCachedAlg(g_AlgSha1Hmac);
+  if (!alg)
     return false;
 
+  // Resolve BCryptDeriveKeyPBKDF2 dynamically (Win7+) so builds with older
+  // _WIN32_WINNT headers compile cleanly while still getting CNG speed.
+  typedef NTSTATUS (WINAPI *PFN_BCryptDeriveKeyPBKDF2)(
+      BCRYPT_ALG_HANDLE, PUCHAR, ULONG, PUCHAR, ULONG, ULONGLONG, PUCHAR, ULONG, ULONG);
+  static PFN_BCryptDeriveKeyPBKDF2 pfnPbkdf2 =
+      (PFN_BCryptDeriveKeyPBKDF2)(void *)::GetProcAddress(
+          ::GetModuleHandleW(L"bcrypt.dll"), "BCryptDeriveKeyPBKDF2");
+  if (pfnPbkdf2)
+  {
+    const NTSTATUS status = pfnPbkdf2(
+        alg,
+        (PUCHAR)password, (ULONG)passwordSize,
+        (PUCHAR)salt, (ULONG)saltSize,
+        (ULONGLONG)numIterations,
+        (PUCHAR)key, (ULONG)keySize,
+        0);
+    return status >= 0;
+  }
+
+  // Fallback on Vista if BCryptDeriveKeyPBKDF2 is absent, reusing cached alg.
+  Byte u[20], t[20], saltBuf[64];
+  if (saltSize > sizeof(saltBuf) - 4)
+    return false;
   UInt32 blockIndex = 1;
   size_t offset = 0;
-
   while (offset < keySize)
   {
-    for (size_t i = 0; i < saltSize; i++)
-      saltBuf[i] = salt[i];
+    memcpy(saltBuf, salt, saltSize);
     saltBuf[saltSize + 0] = (Byte)(blockIndex >> 24);
     saltBuf[saltSize + 1] = (Byte)(blockIndex >> 16);
     saltBuf[saltSize + 2] = (Byte)(blockIndex >> 8);
     saltBuf[saltSize + 3] = (Byte)(blockIndex);
-
-    if (!HmacSha1_Calc(password, passwordSize, saltBuf, saltSize + 4, u))
+    if (!Hash_Calc(alg, password, passwordSize, saltBuf, saltSize + 4, u, 20))
       return false;
-
-    for (unsigned i = 0; i < 20; i++)
-      t[i] = u[i];
-
+    memcpy(t, u, 20);
     for (UInt32 iter = 1; iter < numIterations; iter++)
     {
-      if (!HmacSha1_Calc(password, passwordSize, u, 20, u))
+      if (!Hash_Calc(alg, password, passwordSize, u, 20, u, 20))
         return false;
       for (unsigned i = 0; i < 20; i++)
         t[i] = (Byte)(t[i] ^ u[i]);
     }
-
     size_t todo = keySize - offset;
     if (todo > 20)
       todo = 20;
-    for (size_t i = 0; i < todo; i++)
-      key[offset + i] = t[i];
-
+    memcpy(key + offset, t, todo);
     offset += todo;
     blockIndex++;
   }
-
   Z7_memset_0_ARRAY(u);
   Z7_memset_0_ARRAY(t);
   Z7_memset_0_ARRAY(saltBuf);
   return true;
+#else
+  UNUSED_VAR(password) UNUSED_VAR(passwordSize)
+  UNUSED_VAR(salt) UNUSED_VAR(saltSize)
+  UNUSED_VAR(key)
+  return false;
+#endif
 }
 
 /* ---------------- DES-ECB ---------------- */
 
-bool Des_Ecb_Decrypt(const Byte *key8, Byte *data, size_t size)
+CDesEcbDecryptor::CDesEcbDecryptor(): _ok(false)
 {
-  if ((size & 7) != 0)
-    return false;
-  if (size == 0)
-    return true;
-
 #ifdef _WIN32
-  CAlgProvider prov;
-  if (!prov.Open(BCRYPT_DES_ALGORITHM, 0))
-    return false;
+  _key = NULL;
+#endif
+}
 
+CDesEcbDecryptor::~CDesEcbDecryptor()
+{
+#ifdef _WIN32
+  if (_key)
+    BCryptDestroyKey((BCRYPT_KEY_HANDLE)_key);
+#endif
+}
+
+bool CDesEcbDecryptor::Init(const Byte *key8)
+{
+#ifdef _WIN32
+  if (_key)
+  {
+    BCryptDestroyKey((BCRYPT_KEY_HANDLE)_key);
+    _key = NULL;
+  }
+  _ok = false;
+  BCRYPT_ALG_HANDLE alg = GetCachedAlg(g_AlgDes);
+  if (!alg)
+    return false;
   BCRYPT_KEY_HANDLE key = NULL;
-  if (BCryptGenerateSymmetricKey(prov.Handle(), &key, NULL, 0,
-      (PUCHAR)key8, 8, 0) < 0)
+  if (BCryptGenerateSymmetricKey(alg, &key, NULL, 0, (PUCHAR)key8, 8, 0) < 0)
     return false;
-
-  // CNG defaults to CBC for block ciphers, and a zero IV would silently turn
-  // this into "first block decrypts, the rest is noise". The vendor payload is
-  // plain ECB, which has to be selected explicitly.
   if (BCryptSetProperty(key, BCRYPT_CHAINING_MODE,
       (PUCHAR)BCRYPT_CHAIN_MODE_ECB,
       (ULONG)((wcslen(BCRYPT_CHAIN_MODE_ECB) + 1) * sizeof(wchar_t)), 0) < 0)
@@ -279,18 +381,44 @@ bool Des_Ecb_Decrypt(const Byte *key8, Byte *data, size_t size)
     BCryptDestroyKey(key);
     return false;
   }
-
-  ULONG done = 0;
-  const NTSTATUS res = BCryptDecrypt(key, data, (ULONG)size, NULL, NULL, 0,
-      data, (ULONG)size, &done, 0);
-  BCryptDestroyKey(key);
-  return res >= 0 && done == (ULONG)size;
+  _key = key;
+  _ok = true;
+  return true;
 #else
   UNUSED_VAR(key8)
-  UNUSED_VAR(data)
-  UNUSED_VAR(size)
   return false;
 #endif
+}
+
+bool CDesEcbDecryptor::Decrypt(Byte *data, size_t size) const
+{
+  if ((size & 7) != 0)
+    return false;
+  if (size == 0)
+    return true;
+#ifdef _WIN32
+  if (!_ok || !_key)
+    return false;
+  ULONG done = 0;
+  const NTSTATUS res = BCryptDecrypt((BCRYPT_KEY_HANDLE)_key, data, (ULONG)size,
+      NULL, NULL, 0, data, (ULONG)size, &done, 0);
+  return res >= 0 && done == (ULONG)size;
+#else
+  UNUSED_VAR(data)
+  return false;
+#endif
+}
+
+bool Des_Ecb_Decrypt(const Byte *key8, Byte *data, size_t size)
+{
+  if ((size & 7) != 0)
+    return false;
+  if (size == 0)
+    return true;
+  CDesEcbDecryptor dec;
+  if (!dec.Init(key8))
+    return false;
+  return dec.Decrypt(data, size);
 }
 
 /* ---------------- SHA-256 ---------------- */
@@ -298,7 +426,7 @@ bool Des_Ecb_Decrypt(const Byte *key8, Byte *data, size_t size)
 bool Sha256_Calc(const void *data, size_t size, Byte *digest)
 {
 #ifdef _WIN32
-  return Hash_Calc(BCRYPT_SHA256_ALGORITHM, 0, NULL, 0, data, size, digest, 32);
+  return Hash_Calc(GetCachedAlg(g_AlgSha256), NULL, 0, data, size, digest, 32);
 #else
   UNUSED_VAR(data)
   UNUSED_VAR(size)
@@ -330,11 +458,11 @@ bool Sha256_Kdf7z(const Byte *saltPassword, size_t size,
     memset(p + i * itemSize + size, 0, 8);
   }
 
-  CAlgProvider prov;
-  if (!prov.Open(BCRYPT_SHA256_ALGORITHM, 0))
+  BCRYPT_ALG_HANDLE alg = GetCachedAlg(g_AlgSha256);
+  if (!alg)
     return false;
   CHashHandle hash;
-  if (!hash.Create(prov.Handle(), NULL, 0))
+  if (!hash.Create(alg, NULL, 0))
     return false;
 
   const UInt64 total = (UInt64)1 << numCyclesPower;
@@ -386,6 +514,8 @@ public:
 
   bool Create(BCRYPT_ALG_HANDLE alg, const Byte *key, unsigned keySize, LPCWSTR mode)
   {
+    if (!alg)
+      return false;
     if (BCryptGenerateSymmetricKey(alg, &_handle, NULL, 0,
         (PUCHAR)key, keySize, 0) < 0)
       return false;
@@ -404,11 +534,11 @@ static bool Aes_Crypt(const Byte *key, unsigned keySize, LPCWSTR mode,
 {
   if (size == 0)
     return true;
-  CAlgProvider prov;
-  if (!prov.Open(BCRYPT_AES_ALGORITHM, 0))
+  BCRYPT_ALG_HANDLE alg = GetCachedAlg(g_AlgAes);
+  if (!alg)
     return false;
   CAesKey aesKey;
-  if (!aesKey.Create(prov.Handle(), key, keySize, mode))
+  if (!aesKey.Create(alg, key, keySize, mode))
     return false;
 
   Byte ivBuf[16];

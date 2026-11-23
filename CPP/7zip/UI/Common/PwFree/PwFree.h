@@ -85,7 +85,7 @@ struct CAnswer
   void Clear();
 };
 
-HRESULT Resolve(const CRequest &req, CAnswer &ans);
+HRESULT Resolve(const CRequest &req, CAnswer &ans, volatile long *cancel = NULL);
 
 /*
   Fills Size / MTime / ArcPath from the file itself. Returns false when the
@@ -109,6 +109,8 @@ HRESULT FindPassword_ForArc(const UString &arcPath, bool headersEncrypted, UStri
 */
 HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
     UString &password, UString &note);
+HRESULT FindPassword_ForArc2(const UString &arcPath, bool headersEncrypted,
+    UString &password, UString &note, volatile long *cancel);
 
 }
 

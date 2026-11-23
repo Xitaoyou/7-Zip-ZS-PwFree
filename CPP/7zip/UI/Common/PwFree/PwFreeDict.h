@@ -29,12 +29,32 @@
 namespace NPwFree {
 
 /*
+  Ref-counted handle to an immutable decoded dictionary buffer so Dict_Clear()
+  cannot invalidate a buffer while a provider is still iterating it.
+*/
+struct CDictData;
+
+class CDictHandle
+{
+  CDictData *_ptr;
+public:
+  CDictHandle(): _ptr(NULL) {}
+  ~CDictHandle() { Reset(); }
+  CDictHandle(const CDictHandle &other);
+  CDictHandle &operator=(const CDictHandle &other);
+  void Attach(CDictData *p);
+  void Reset();
+  bool IsValid() const { return _ptr != NULL; }
+  const CByteBuffer *Buffer() const;
+};
+
+/*
   Returns the decoded dictionary text for 'url', fetching and decoding it on
-  the first request. 'deadline' is an absolute GetTickCount32() value, 0 for
+  the first request. 'deadline' is an absolute GetTickCount64() value, 0 for
   "no deadline". Returns S_FALSE when the dictionary is unavailable.
 */
-HRESULT LoadDict(const UString &url, UInt32 timeoutMs, UInt32 deadline,
-    const CByteBuffer *&text);
+HRESULT LoadDict(const UString &url, UInt32 timeoutMs, UInt64 deadline,
+    bool allowHttpFallback, volatile long *cancel, CDictHandle &out);
 
 // Forgets every decoded dictionary (used by "reload" and by the tests).
 void Dict_Clear();

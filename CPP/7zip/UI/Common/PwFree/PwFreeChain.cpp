@@ -14,11 +14,20 @@ namespace NPwFree {
 
 namespace {
 
-const unsigned kCancelCheckMask = 0xFFF;  // poll the stop flag every 4096 candidates
+const unsigned kCancelCheckMask = 0xFF;  // poll the stop flag every 256 candidates
 
-UInt32 Now()
+UInt64 Now()
 {
-  return (UInt32)::GetTickCount();
+#ifdef _WIN32
+  typedef ULONGLONG (WINAPI *PFN_GetTickCount64)(void);
+  static PFN_GetTickCount64 pfn = (PFN_GetTickCount64)(void *)::GetProcAddress(
+      ::GetModuleHandleW(L"kernel32.dll"), "GetTickCount64");
+  if (pfn)
+    return (UInt64)pfn();
+  return (UInt64)::GetTickCount();
+#else
+  return 0;
+#endif
 }
 
 bool IsCancelled(volatile long *cancel)
@@ -98,11 +107,12 @@ class CDictProvider Z7_final: public IProvider
   CObjectVector<UString> _urls;
   unsigned _urlIndex;
   CDictLines _lines;
-  const CByteBuffer *_text;
-  const CByteBuffer *_loaded;
+  CDictHandle _loaded;
+  bool _hasLoaded;
   UInt32 _budgetMs;
-  UInt32 _deadline;
-  bool _noMore;
+  UInt64 _deadline;
+  bool _allowHttpFallback;
+  volatile long *_cancel;
 
   void BuildUrlList()
   {
@@ -115,13 +125,11 @@ class CDictProvider Z7_final: public IProvider
   }
 
 public:
-  explicit CDictProvider(const CRequest &req):
-      _urlIndex(0), _text(NULL), _loaded(NULL), _noMore(false)
+  CDictProvider(const CRequest &req, const CSettings &st, volatile long *cancel):
+      _urlIndex(0), _hasLoaded(false), _budgetMs(st.DictBudgetMs),
+      _deadline(0), _allowHttpFallback(st.AllowHttpFallback), _cancel(cancel)
   {
     UNUSED_VAR(req)
-    const CSettings st = GetSettings();
-    _budgetMs = st.DictBudgetMs;
-    _deadline = (st.DictBudgetMs == 0) ? 0 : (Now() + st.DictBudgetMs);
     BuildUrlList();
   }
 
@@ -130,19 +138,23 @@ public:
 
   HRESULT Next(UString &password)
   {
+    if (_deadline == 0 && _budgetMs != 0)
+      _deadline = Now() + _budgetMs;
+
     for (;;)
     {
       password.Empty();
-      if (IsCancelled(NULL))
-        return S_FALSE;
+      if (IsCancelled(_cancel))
+        return E_ABORT;
       if (_deadline != 0 && Now() >= _deadline)
         return S_FALSE;
 
-      if (_text)
+      if (_hasLoaded)
       {
         if (_lines.Next(password) == S_OK && !password.IsEmpty())
           return S_OK;
-        _text = NULL;
+        _hasLoaded = false;
+        _loaded.Reset();
         _urlIndex++;
         continue;
       }
@@ -151,18 +163,26 @@ public:
         return S_FALSE;
 
       const UString &url = _urls[_urlIndex];
-      if (LoadDict(url, 120000, _deadline, _loaded) != S_OK)
+      const HRESULT hr = LoadDict(url, _budgetMs ? _budgetMs : 120000,
+          _deadline, _allowHttpFallback, _cancel, _loaded);
+      if (hr == E_ABORT)
+        return E_ABORT;
+      if (hr != S_OK || !_loaded.IsValid())
       {
         _urlIndex++;
         continue;
       }
-      _text = _loaded;
-      _lines.Init(*_text);
+      _hasLoaded = true;
+      _lines.Init(*_loaded.Buffer());
     }
   }
-};
 
-/* ---------------- cloud ---------------- */
+  void Finish()
+  {
+    _hasLoaded = false;
+    _loaded.Reset();
+  }
+};
 
 /* ---------------- mask ---------------- */
 
@@ -181,6 +201,7 @@ class CMaskProvider Z7_final: public IProvider
 
   Byte _digits[kMaxLen];
   unsigned _len;
+  UInt32 _budgetMs;
   bool _done;
 
   void Reset(unsigned len)
@@ -205,11 +226,15 @@ class CMaskProvider Z7_final: public IProvider
   }
 
 public:
-  explicit CMaskProvider(const CRequest &): _len(0), _done(false) { Reset(kMinLen); }
+  CMaskProvider(const CRequest &, const CSettings &st):
+      _len(0), _budgetMs(st.MaskBudgetMs), _done(false)
+  {
+    Reset(kMinLen);
+  }
 
   const char *Name() const { return "mask"; }
 
-  UInt32 BudgetMs() const { return GetSettings().MaskBudgetMs; }
+  UInt32 BudgetMs() const { return _budgetMs; }
 
   HRESULT Next(UString &password)
   {
@@ -229,13 +254,18 @@ class CCloudProvider Z7_final: public IProvider
 {
   CCloudLookup _lookup;
   UInt32 _budgetMs;
+  bool _allowHttpFallback;
+  volatile long *_cancel;
   bool _queried;
 
 public:
-  explicit CCloudProvider(const CRequest &req):
-      _lookup(*req.ArcPath), _queried(false)
+  CCloudProvider(const CRequest &req, const CSettings &st, volatile long *cancel):
+      _lookup(*req.ArcPath),
+      _budgetMs(st.CloudBudgetMs),
+      _allowHttpFallback(st.AllowHttpFallback),
+      _cancel(cancel),
+      _queried(false)
   {
-    _budgetMs = GetSettings().CloudBudgetMs;
   }
 
   const char *Name() const { return "cloud"; }
@@ -243,10 +273,14 @@ public:
 
   HRESULT Next(UString &password)
   {
+    if (IsCancelled(_cancel))
+      return E_ABORT;
     if (!_queried)
     {
       _queried = true;
-      _lookup.Query(_budgetMs);
+      _lookup.Query(_budgetMs, _allowHttpFallback, _cancel);
+      if (IsCancelled(_cancel))
+        return E_ABORT;
     }
     return _lookup.Next(password);
   }
@@ -256,41 +290,47 @@ public:
 
 IProvider *CreateSeedProvider(const CRequest &req) { return new CSeedProvider(req); }
 IProvider *CreateCacheProvider(const CRequest &req) { return new CCacheProvider(req); }
-IProvider *CreateDictProvider(const CRequest &req) { return new CDictProvider(req); }
-IProvider *CreateCloudProvider(const CRequest &req) { return new CCloudProvider(req); }
-IProvider *CreateMaskProvider(const CRequest &req) { return new CMaskProvider(req); }
+IProvider *CreateDictProvider(const CRequest &req, const CSettings &st, volatile long *cancel)
+{
+  return new CDictProvider(req, st, cancel);
+}
+IProvider *CreateCloudProvider(const CRequest &req, const CSettings &st, volatile long *cancel)
+{
+  return new CCloudProvider(req, st, cancel);
+}
+IProvider *CreateMaskProvider(const CRequest &req, const CSettings &st)
+{
+  return new CMaskProvider(req, st);
+}
 
-HRESULT RunChain(const CRequest &req, IVerify &verify, UString &password,
-    AString &providerName, unsigned &elapsedMs, volatile long *cancel)
+HRESULT RunChain(const CRequest &req, const CSettings &st, IVerify &verify,
+    UString &password, AString &providerName, unsigned &elapsedMs, volatile long *cancel)
 {
   password.Empty();
   providerName.Empty();
   elapsedMs = 0;
 
-  const UInt32 start = Now();
-  const CSettings st = GetSettings();
+  const UInt64 start = Now();
 
   CObjectVector<IProvider *> providers;
   providers.Add(CreateSeedProvider(req));
   providers.Add(CreateCacheProvider(req));
-  if (st.UseLocalDict)
-    providers.Add(CreateDictProvider(req));
+  // Cloud lookup takes milliseconds-to-seconds and returns exact archive hits,
+  // so it runs BEFORE the 120s dictionary scan.
   if (st.UseCloud && req.ArcPath)
-    providers.Add(CreateCloudProvider(req));
-  /*
-    The mask walk is the slowest provider, so it runs last: every cheaper source
-    has already had its turn before the CPU is spent.
-  */
+    providers.Add(CreateCloudProvider(req, st, cancel));
+  if (st.UseLocalDict)
+    providers.Add(CreateDictProvider(req, st, cancel));
   if (st.MaskBudgetMs != 0)
-    providers.Add(CreateMaskProvider(req));
+    providers.Add(CreateMaskProvider(req, st));
 
   HRESULT result = S_FALSE;
   unsigned counter = 0;
 
-  for (unsigned i = 0; i < providers.Size() && result != S_OK; i++)
+  for (unsigned i = 0; i < providers.Size() && result != S_OK && result != E_ABORT; i++)
   {
     IProvider *const provider = providers[i];
-    const UInt32 providerStart = Now();
+    const UInt64 providerStart = Now();
     const UInt32 budget = provider->BudgetMs();
 
     for (;;)
@@ -305,6 +345,11 @@ HRESULT RunChain(const CRequest &req, IVerify &verify, UString &password,
 
       UString candidate;
       const HRESULT hr = provider->Next(candidate);
+      if (hr == E_ABORT)
+      {
+        result = E_ABORT;
+        break;
+      }
       if (hr != S_OK)
         break;
       if (candidate.IsEmpty())
@@ -327,7 +372,7 @@ HRESULT RunChain(const CRequest &req, IVerify &verify, UString &password,
   for (unsigned i = 0; i < providers.Size(); i++)
     delete providers[i];
 
-  elapsedMs = Now() - start;
+  elapsedMs = (unsigned)(Now() - start);
   return result;
 }
 
