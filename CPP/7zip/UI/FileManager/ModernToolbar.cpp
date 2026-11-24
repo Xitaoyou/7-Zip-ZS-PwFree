@@ -369,8 +369,8 @@ void CModernToolbar::OnPaint()
 
   if (_showLabels)
   {
-    HFONT font = CreateUiFont(dpi, 84, FW_NORMAL);
-    HGDIOBJ oldFont = ::SelectObject(memDC, font);
+    HFONT font = GetCachedUiFont(dpi, 84, FW_NORMAL);
+    HGDIOBJ oldFont = font ? ::SelectObject(memDC, font) : NULL;
     ::SetBkMode(memDC, TRANSPARENT);
     ::SetTextColor(memDC, pal.TextPrimary);
 
@@ -384,8 +384,8 @@ void CModernToolbar::OnPaint()
           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 
-    ::SelectObject(memDC, oldFont);
-    ::DeleteObject(font);
+    if (oldFont)
+      ::SelectObject(memDC, oldFont);
   }
 
   ::BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);

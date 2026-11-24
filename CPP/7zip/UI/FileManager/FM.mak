@@ -102,9 +102,4 @@ AGENT_OBJS = \
   $O\ArchiveFolderOut.obj \
   $O\UpdateCallbackAgent.obj \
 
-# Explicit header dependencies to prevent stale-obj ABI mismatches when
-# CPanel / CApp / modern UI headers or the manifest change during incremental builds.
-$(FM_OBJS): ../../UI/FileManager/App.h ../../UI/FileManager/Panel.h ../../UI/FileManager/ModernTheme.h ../../UI/FileManager/ModernToolbar.h ../../UI/FileManager/BreadcrumbBar.h
-$O\resource.res: ../../UI/FileManager/7zFM.exe.manifest ../../UI/FileManager/SettingsPage2.rc
-
 # we need empty line after last line above

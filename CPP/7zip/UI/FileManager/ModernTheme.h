@@ -38,8 +38,8 @@ CPalette GetPalette();
 UINT GetDpiForHwnd(HWND hWnd);
 int ScaleDip(int dip, UINT dpi);
 
-// Creates a modern UI font (Segoe UI Variable Text -> Segoe UI -> Microsoft YaHei UI).
-HFONT CreateUiFont(UINT dpi, int pointSize10, int weight = FW_NORMAL);
+// Returns a cached modern UI font (do NOT call DeleteObject on the returned handle).
+HFONT GetCachedUiFont(UINT dpi, int pointSize10, int weight = FW_NORMAL);
 
 // Applies Win11 rounded corners and Win10/11 immersive dark/light title bar.
 void ApplyWindowChrome(HWND hWnd);

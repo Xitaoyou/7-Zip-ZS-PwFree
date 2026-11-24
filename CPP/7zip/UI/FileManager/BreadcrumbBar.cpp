@@ -177,8 +177,8 @@ void CBreadcrumbBar::RecalcLayout()
   _upRect.bottom = _upRect.top + upSize;
 
   HDC hdc = ::GetDC(_hWnd);
-  HFONT font = CreateUiFont(dpi, 90, FW_NORMAL);
-  HGDIOBJ oldFont = hdc ? ::SelectObject(hdc, font) : NULL;
+  HFONT font = GetCachedUiFont(dpi, 90, FW_NORMAL);
+  HGDIOBJ oldFont = (hdc && font) ? ::SelectObject(hdc, font) : NULL;
 
   int x = _upRect.right + ScaleDip(10, dpi);
   const int segPadX = ScaleDip(7, dpi);
@@ -202,10 +202,10 @@ void CBreadcrumbBar::RecalcLayout()
 
   if (hdc)
   {
-    ::SelectObject(hdc, oldFont);
+    if (oldFont)
+      ::SelectObject(hdc, oldFont);
     ::ReleaseDC(_hWnd, hdc);
   }
-  ::DeleteObject(font);
 }
 
 int CBreadcrumbBar::HitTest(int x, int y) const
@@ -318,9 +318,9 @@ void CBreadcrumbBar::OnPaint()
   ::DeleteObject(chevPen);
 
   // Draw segment text labels.
-  HFONT font = CreateUiFont(dpi, 90, FW_NORMAL);
-  HFONT boldFont = CreateUiFont(dpi, 90, FW_SEMIBOLD);
-  HGDIOBJ oldFont = ::SelectObject(memDC, font);
+  HFONT font = GetCachedUiFont(dpi, 90, FW_NORMAL);
+  HFONT boldFont = GetCachedUiFont(dpi, 90, FW_SEMIBOLD);
+  HGDIOBJ oldFont = font ? ::SelectObject(memDC, font) : NULL;
   ::SetBkMode(memDC, TRANSPARENT);
 
   FOR_VECTOR (i, _segments)
@@ -332,15 +332,16 @@ void CBreadcrumbBar::OnPaint()
       sr.right = boxRc.right - ScaleDip(4, dpi);
 
     const bool isLast = (i + 1 == _segments.Size());
-    ::SelectObject(memDC, (isLast || _segments[i].IsArchive) ? boldFont : font);
+    HFONT useFont = (isLast || _segments[i].IsArchive) ? boldFont : font;
+    if (useFont)
+      ::SelectObject(memDC, useFont);
     ::SetTextColor(memDC, _segments[i].IsArchive ? pal.PillText : (isLast ? pal.TextPrimary : pal.TextSecondary));
     ::DrawTextW(memDC, _segments[i].Label, -1, &sr,
         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
   }
 
-  ::SelectObject(memDC, oldFont);
-  ::DeleteObject(font);
-  ::DeleteObject(boldFont);
+  if (oldFont)
+    ::SelectObject(memDC, oldFont);
 
   // Subtle 1px bottom line.
   HPEN btmPen = ::CreatePen(PS_SOLID, 1, pal.BorderSubtle);

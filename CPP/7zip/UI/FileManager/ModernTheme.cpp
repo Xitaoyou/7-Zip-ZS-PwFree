@@ -3,7 +3,6 @@
 #include "StdAfx.h"
 
 #include <CommCtrl.h>
-#include <Uxtheme.h>
 
 #include "ModernTheme.h"
 
@@ -11,16 +10,47 @@
 #include "../../../../DarkMode/lib/include/Darkmodelib.h"
 #endif
 
-#pragma comment(lib, "uxtheme.lib")
+#ifndef CLEARTYPE_QUALITY
+#define CLEARTYPE_QUALITY 5
+#endif
+#ifndef LVS_EX_DOUBLEBUFFER
+#define LVS_EX_DOUBLEBUFFER 0x00010000
+#endif
 
 namespace NModernUI {
 
 namespace {
 
-// Undocumented / Win10+ DWM attributes defined here for older SDK headers.
+// Win10+ DWM attributes defined here for older SDK headers.
 const DWORD kDwmwaUseImmersiveDarkMode = 20;
 const DWORD kDwmwaWindowCornerPreference = 33;
 const DWORD kDwmwcpRound = 2;
+
+const wchar_t * const kPropOrigHeaderProc = L"7zFM_OrigHeaderProc";
+const wchar_t * const kPropOrigStatusProc = L"7zFM_OrigStatusProc";
+
+struct CFontCacheEntry
+{
+  UINT Dpi;
+  int PointSize10;
+  int Weight;
+  HFONT Handle;
+};
+
+const unsigned kMaxCachedFonts = 16;
+CFontCacheEntry g_FontCache[kMaxCachedFonts];
+unsigned g_FontCacheCount = 0;
+
+void ApplyUxTheme(HWND hWnd, LPCWSTR subApp)
+{
+  typedef HRESULT (WINAPI *PFN_SetWindowTheme)(HWND, LPCWSTR, LPCWSTR);
+  static HMODULE hUx = ::LoadLibraryW(L"uxtheme.dll");
+  static PFN_SetWindowTheme pfn = hUx
+      ? (PFN_SetWindowTheme)(void *)::GetProcAddress(hUx, "SetWindowTheme")
+      : NULL;
+  if (pfn && hWnd)
+    pfn(hWnd, subApp, NULL);
+}
 
 bool QueryWindowsAppsDarkMode()
 {
@@ -52,15 +82,15 @@ void DrawRoundedRect(HDC hdc, const RECT &rc, int radius, COLORREF fill, COLORRE
 }
 
 // Flat ListView Header subclass: cleaner 30dip height, subtle bottom divider, no 3D bevels.
-LRESULT CALLBACK ModernHeaderProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam,
-    UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+LRESULT CALLBACK ModernHeaderProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-  UNUSED_VAR(uIdSubclass)
-  UNUSED_VAR(dwRefData)
+  WNDPROC origProc = (WNDPROC)::GetPropW(hWnd, kPropOrigHeaderProc);
+  if (!origProc)
+    return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 
   if (msg == HDM_LAYOUT)
   {
-    const LRESULT res = ::DefSubclassProc(hWnd, msg, wParam, lParam);
+    const LRESULT res = ::CallWindowProcW(origProc, hWnd, msg, wParam, lParam);
     HDLAYOUT *layout = (HDLAYOUT *)lParam;
     if (layout && layout->pwpos && layout->prc)
     {
@@ -82,6 +112,11 @@ LRESULT CALLBACK ModernHeaderProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
     HDC hdc = ::BeginPaint(hWnd, &ps);
     RECT rc;
     ::GetClientRect(hWnd, &rc);
+    if (rc.right <= 0 || rc.bottom <= 0)
+    {
+      ::EndPaint(hWnd, &ps);
+      return 0;
+    }
 
     HDC memDC = ::CreateCompatibleDC(hdc);
     HBITMAP memBmp = ::CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
@@ -94,8 +129,8 @@ LRESULT CALLBACK ModernHeaderProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
     ::FillRect(memDC, &rc, bgBr);
     ::DeleteObject(bgBr);
 
-    HFONT font = CreateUiFont(dpi, 90, FW_SEMIBOLD);
-    HGDIOBJ oldFont = ::SelectObject(memDC, font);
+    HFONT font = GetCachedUiFont(dpi, 90, FW_SEMIBOLD);
+    HGDIOBJ oldFont = font ? ::SelectObject(memDC, font) : NULL;
     ::SetBkMode(memDC, TRANSPARENT);
     ::SetTextColor(memDC, pal.TextSecondary);
 
@@ -133,7 +168,6 @@ LRESULT CALLBACK ModernHeaderProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
 
       ::DrawTextW(memDC, text, -1, &textRc, fmt);
 
-      // Subtle vertical separator between header columns.
       if (i + 1 < count)
       {
         const int sepPad = ScaleDip(7, dpi);
@@ -142,14 +176,13 @@ LRESULT CALLBACK ModernHeaderProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
       }
     }
 
-    // Bottom 1px border separating header from list content.
     ::MoveToEx(memDC, rc.left, rc.bottom - 1, NULL);
     ::LineTo(memDC, rc.right, rc.bottom - 1);
 
     ::SelectObject(memDC, oldPen);
     ::DeleteObject(divPen);
-    ::SelectObject(memDC, oldFont);
-    ::DeleteObject(font);
+    if (oldFont)
+      ::SelectObject(memDC, oldFont);
 
     ::BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);
     ::SelectObject(memDC, oldBmp);
@@ -164,17 +197,20 @@ LRESULT CALLBACK ModernHeaderProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
     return 1;
 
   if (msg == WM_NCDESTROY)
-    ::RemoveWindowSubclass(hWnd, ModernHeaderProc, uIdSubclass);
+  {
+    ::RemovePropW(hWnd, kPropOrigHeaderProc);
+    ::SetWindowLongPtrW(hWnd, GWLP_WNDPROC, (LONG_PTR)origProc);
+  }
 
-  return ::DefSubclassProc(hWnd, msg, wParam, lParam);
+  return ::CallWindowProcW(origProc, hWnd, msg, wParam, lParam);
 }
 
 // Flat modern StatusBar subclass: 26dip height, 1px top border, PwFree accent pill.
-LRESULT CALLBACK ModernStatusBarProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam,
-    UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+LRESULT CALLBACK ModernStatusBarProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-  UNUSED_VAR(uIdSubclass)
-  UNUSED_VAR(dwRefData)
+  WNDPROC origProc = (WNDPROC)::GetPropW(hWnd, kPropOrigStatusProc);
+  if (!origProc)
+    return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 
   if (msg == WM_ERASEBKGND)
     return 1;
@@ -202,7 +238,6 @@ LRESULT CALLBACK ModernStatusBarProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
     ::FillRect(memDC, &rc, bgBr);
     ::DeleteObject(bgBr);
 
-    // Subtle 1px top divider.
     HPEN topPen = ::CreatePen(PS_SOLID, 1, pal.BorderSubtle);
     HGDIOBJ oldPen = ::SelectObject(memDC, topPen);
     ::MoveToEx(memDC, rc.left, rc.top, NULL);
@@ -210,8 +245,8 @@ LRESULT CALLBACK ModernStatusBarProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
     ::SelectObject(memDC, oldPen);
     ::DeleteObject(topPen);
 
-    HFONT font = CreateUiFont(dpi, 88, FW_NORMAL);
-    HGDIOBJ oldFont = ::SelectObject(memDC, font);
+    HFONT font = GetCachedUiFont(dpi, 88, FW_NORMAL);
+    HGDIOBJ oldFont = font ? ::SelectObject(memDC, font) : NULL;
     ::SetBkMode(memDC, TRANSPARENT);
 
     int parts[16];
@@ -265,8 +300,8 @@ LRESULT CALLBACK ModernStatusBarProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
       }
     }
 
-    ::SelectObject(memDC, oldFont);
-    ::DeleteObject(font);
+    if (oldFont)
+      ::SelectObject(memDC, oldFont);
 
     ::BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);
     ::SelectObject(memDC, oldBmp);
@@ -278,9 +313,12 @@ LRESULT CALLBACK ModernStatusBarProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
   }
 
   if (msg == WM_NCDESTROY)
-    ::RemoveWindowSubclass(hWnd, ModernStatusBarProc, uIdSubclass);
+  {
+    ::RemovePropW(hWnd, kPropOrigStatusProc);
+    ::SetWindowLongPtrW(hWnd, GWLP_WNDPROC, (LONG_PTR)origProc);
+  }
 
-  return ::DefSubclassProc(hWnd, msg, wParam, lParam);
+  return ::CallWindowProcW(origProc, hWnd, msg, wParam, lParam);
 }
 
 } // namespace
@@ -365,8 +403,16 @@ int ScaleDip(int dip, UINT dpi)
   return ::MulDiv(dip, (int)dpi, 96);
 }
 
-HFONT CreateUiFont(UINT dpi, int pointSize10, int weight)
+HFONT GetCachedUiFont(UINT dpi, int pointSize10, int weight)
 {
+  for (unsigned i = 0; i < g_FontCacheCount; i++)
+  {
+    if (g_FontCache[i].Dpi == dpi
+        && g_FontCache[i].PointSize10 == pointSize10
+        && g_FontCache[i].Weight == weight)
+      return g_FontCache[i].Handle;
+  }
+
   LOGFONTW lf;
   memset(&lf, 0, sizeof(lf));
   lf.lfHeight = -::MulDiv(pointSize10, (int)dpi, 720);
@@ -374,7 +420,16 @@ HFONT CreateUiFont(UINT dpi, int pointSize10, int weight)
   lf.lfCharSet = DEFAULT_CHARSET;
   lf.lfQuality = CLEARTYPE_QUALITY;
   wcscpy_s(lf.lfFaceName, LF_FACESIZE, L"Segoe UI");
-  return ::CreateFontIndirectW(&lf);
+  HFONT hFont = ::CreateFontIndirectW(&lf);
+  if (hFont && g_FontCacheCount < kMaxCachedFonts)
+  {
+    g_FontCache[g_FontCacheCount].Dpi = dpi;
+    g_FontCache[g_FontCacheCount].PointSize10 = pointSize10;
+    g_FontCache[g_FontCacheCount].Weight = weight;
+    g_FontCache[g_FontCacheCount].Handle = hFont;
+    g_FontCacheCount++;
+  }
+  return hFont;
 }
 
 void ApplyWindowChrome(HWND hWnd)
@@ -402,7 +457,6 @@ void StyleListView(HWND hListView)
   if (!hListView)
     return;
 
-  // Strip classic 3D sunken client edge for a clean Bandizip-style flat surface.
   LONG_PTR exStyle = ::GetWindowLongPtrW(hListView, GWL_EXSTYLE);
   if ((exStyle & WS_EX_CLIENTEDGE) != 0)
   {
@@ -412,7 +466,6 @@ void StyleListView(HWND hListView)
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
   }
 
-  // Enable double buffering and full-row select for smooth, flicker-free rendering.
   DWORD lvEx = ListView_GetExtendedListViewStyle(hListView);
   lvEx |= LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT;
   ListView_SetExtendedListViewStyle(hListView, lvEx);
@@ -423,15 +476,19 @@ void StyleListView(HWND hListView)
   ListView_SetTextBkColor(hListView, pal.BgContent);
   ListView_SetTextColor(hListView, pal.TextPrimary);
 
-  HFONT font = CreateUiFont(dpi, 95, FW_NORMAL);
+  HFONT font = GetCachedUiFont(dpi, 95, FW_NORMAL);
   if (font)
     ::SendMessageW(hListView, WM_SETFONT, (WPARAM)font, TRUE);
 
-  ::SetWindowTheme(hListView, pal.IsDark ? L"DarkMode_Explorer" : L"Explorer", NULL);
+  ApplyUxTheme(hListView, pal.IsDark ? L"DarkMode_Explorer" : L"Explorer");
 
   HWND hHeader = ListView_GetHeader(hListView);
-  if (hHeader)
-    ::SetWindowSubclass(hHeader, ModernHeaderProc, 1001, 0);
+  if (hHeader && !::GetPropW(hHeader, kPropOrigHeaderProc))
+  {
+    WNDPROC orig = (WNDPROC)::SetWindowLongPtrW(hHeader, GWLP_WNDPROC, (LONG_PTR)ModernHeaderProc);
+    if (orig)
+      ::SetPropW(hHeader, kPropOrigHeaderProc, (HANDLE)orig);
+  }
 }
 
 void StyleStatusBar(HWND hStatusBar)
@@ -440,7 +497,12 @@ void StyleStatusBar(HWND hStatusBar)
     return;
   const UINT dpi = GetDpiForHwnd(hStatusBar);
   ::SendMessageW(hStatusBar, SB_SETMINHEIGHT, (WPARAM)ScaleDip(26, dpi), 0);
-  ::SetWindowSubclass(hStatusBar, ModernStatusBarProc, 1002, 0);
+  if (!::GetPropW(hStatusBar, kPropOrigStatusProc))
+  {
+    WNDPROC orig = (WNDPROC)::SetWindowLongPtrW(hStatusBar, GWLP_WNDPROC, (LONG_PTR)ModernStatusBarProc);
+    if (orig)
+      ::SetPropW(hStatusBar, kPropOrigStatusProc, (HANDLE)orig);
+  }
 }
 
 } // namespace NModernUI

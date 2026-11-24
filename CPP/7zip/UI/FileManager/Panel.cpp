@@ -262,6 +262,8 @@ LRESULT CMyListView::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
   else if (message == WM_SETFOCUS)
   {
     _panel->_lastFocusedIsList = true;
+    if (_panel->_breadcrumbEditMode)
+      _panel->SetBreadcrumbEditMode(false);
     _panel->_panelCallback->PanelWasFocused();
   }
   return CListView2::OnMessage(message, wParam, lParam);

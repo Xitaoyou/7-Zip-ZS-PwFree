@@ -35,6 +35,7 @@
 #include "App.h"
 #include "FormatUtils.h"
 #include "LangUtils.h"
+#include "ModernTheme.h"
 #include "MyLoadMenu.h"
 #include "Panel.h"
 #include "RegistryUtils.h"
@@ -1144,6 +1145,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
       break;
     */
     
+    case WM_SETTINGCHANGE:
+    case 0x031A: // WM_THEMECHANGED
+    {
+      NModernUI::ApplyWindowChrome(hWnd);
+      g_App._modernToolBar.Invalidate();
+      for (unsigned i = 0; i < kNumPanelsMax; i++)
+      {
+        if (g_App.Panels[i].PanelCreated)
+        {
+          NModernUI::StyleListView(g_App.Panels[i]._listView);
+          g_App.Panels[i]._breadcrumbBar.Invalidate();
+        }
+      }
+      break;
+    }
+
     case 0x02E0: // WM_DPICHANGED
     {
       const RECT *suggested = (const RECT *)lParam;
