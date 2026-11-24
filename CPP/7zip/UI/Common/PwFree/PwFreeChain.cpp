@@ -114,6 +114,9 @@ class CDictProvider Z7_final: public IProvider
   bool _allowHttpFallback;
   volatile long *_cancel;
 
+  unsigned _dynamicNext;
+  unsigned _dynamicMisses;
+
   void BuildUrlList()
   {
     _urls.Add(GetUnicodeString("http://file.cscjapp.cn/dic/server/data6.dt"));
@@ -127,7 +130,8 @@ class CDictProvider Z7_final: public IProvider
 public:
   CDictProvider(const CRequest &req, const CSettings &st, volatile long *cancel):
       _urlIndex(0), _hasLoaded(false), _budgetMs(st.DictBudgetMs),
-      _deadline(0), _allowHttpFallback(st.AllowHttpFallback), _cancel(cancel)
+      _deadline(0), _allowHttpFallback(st.AllowHttpFallback), _cancel(cancel),
+      _dynamicNext(8), _dynamicMisses(0)
   {
     UNUSED_VAR(req)
     BuildUrlList();
@@ -159,19 +163,40 @@ public:
         continue;
       }
 
-      if (_urlIndex >= _urls.Size())
-        return S_FALSE;
+      UString url;
+      bool isDynamic = false;
+      if (_urlIndex < _urls.Size())
+      {
+        url = _urls[_urlIndex];
+      }
+      else
+      {
+        // Dynamically discover new server shards (data8.dt, data9.dt, ...)
+        // stopping after 2 consecutive missing shards.
+        if (_dynamicMisses >= 2 || _dynamicNext > 32)
+          return S_FALSE;
+        isDynamic = true;
+        url = L"http://file.cscjapp.cn/dic/server/data";
+        url.Add_UInt32(_dynamicNext);
+        url += L".dt";
+        _dynamicNext++;
+      }
 
-      const UString &url = _urls[_urlIndex];
-      const HRESULT hr = LoadDict(url, _budgetMs ? _budgetMs : 120000,
+      const UInt32 reqTimeout = isDynamic ? 3000 : (_budgetMs ? _budgetMs : 120000);
+      const HRESULT hr = LoadDict(url, reqTimeout,
           _deadline, _allowHttpFallback, _cancel, _loaded);
       if (hr == E_ABORT)
         return E_ABORT;
       if (hr != S_OK || !_loaded.IsValid())
       {
-        _urlIndex++;
+        if (isDynamic)
+          _dynamicMisses++;
+        else
+          _urlIndex++;
         continue;
       }
+      if (isDynamic)
+        _dynamicMisses = 0;
       _hasLoaded = true;
       _lines.Init(*_loaded.Buffer());
     }

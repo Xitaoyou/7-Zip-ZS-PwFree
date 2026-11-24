@@ -16,8 +16,12 @@ struct CDictData
   volatile long RefCount;
   UString Url;
   CByteBuffer Text;
+  UString ETag;
+  UString LastModified;
+  UInt64 LastCheckedMs;
+  bool Missing;
 
-  CDictData(): RefCount(1) {}
+  CDictData(): RefCount(1), LastCheckedMs(0), Missing(false) {}
   void AddRef() { ::InterlockedIncrement(&RefCount); }
   void Release()
   {
@@ -29,6 +33,7 @@ struct CDictData
 namespace {
 
 const UInt64 kDictionarySizeLimit = (UInt64)32 << 20;
+const UInt64 kRevalidateIntervalMs = (UInt64)30 * 60 * 1000; // 30 minutes
 const Byte kDesKey[8] = { 'D', 'E', 'S', 'K', 'e', 'y', 'E', 'n' };
 
 UInt64 NowMs()
@@ -232,59 +237,162 @@ HRESULT LoadDict(const UString &url, UInt32 timeoutMs, UInt64 deadline,
   if (cancel && *cancel != 0)
     return E_ABORT;
 
+  const UInt64 now = NowMs();
+  CDictHandle cached;
+  UString cachedETag;
+  UString cachedLM;
+  bool cachedMissing = false;
+  bool needFetch = true;
+
   {
     CStoreLock lock(g_StoreCS);
     FOR_VECTOR (i, g_Store.Items)
     {
-      if (g_Store.Items[i]->Url == url)
+      CDictData *item = g_Store.Items[i];
+      if (item->Url == url)
       {
-        g_Store.Items[i]->AddRef();
-        out.Attach(g_Store.Items[i]);
-        return S_OK;
+        const bool fresh = (now - item->LastCheckedMs < kRevalidateIntervalMs);
+        if (item->Missing)
+        {
+          cachedMissing = true;
+          if (fresh)
+            return S_FALSE;
+        }
+        else
+        {
+          item->AddRef();
+          cached.Attach(item);
+          cachedETag = item->ETag;
+          cachedLM = item->LastModified;
+          if (fresh)
+          {
+            out = cached;
+            return S_OK;
+          }
+        }
+        break;
       }
     }
   }
 
   if (deadline != 0)
   {
-    const UInt64 now = NowMs();
     if (now >= deadline)
+    {
+      if (cached.IsValid())
+      {
+        out = cached;
+        return S_OK;
+      }
       return S_FALSE;
+    }
     const UInt64 left = deadline - now;
     if (left < timeoutMs)
       timeoutMs = (UInt32)left;
   }
   if (timeoutMs == 0)
+  {
+    if (cached.IsValid())
+    {
+      out = cached;
+      return S_OK;
+    }
     return S_FALSE;
+  }
 
   CByteBuffer body;
+  NPwHttp::CResponseMeta meta;
   UString errorText;
-  if (NPwHttp::GetBytes(url, timeoutMs, (size_t)kDictionarySizeLimit,
-      allowHttpFallback, body, errorText) != S_OK)
+  const HRESULT httpRes = NPwHttp::GetBytesEx(url, timeoutMs, (size_t)kDictionarySizeLimit,
+      allowHttpFallback, cachedETag, cachedLM, body, meta, errorText);
+
+  if (httpRes == S_OK && meta.NotModified && cached.IsValid())
+  {
+    CStoreLock lock(g_StoreCS);
+    FOR_VECTOR (i, g_Store.Items)
+    {
+      if (g_Store.Items[i]->Url == url)
+      {
+        g_Store.Items[i]->LastCheckedMs = NowMs();
+        break;
+      }
+    }
+    out = cached;
+    return S_OK;
+  }
+
+  if (httpRes != S_OK)
+  {
+    if (meta.StatusCode == 404)
+    {
+      // Remember 404 for 30 minutes so dynamic probing skips missing shards quickly.
+      CStoreLock lock(g_StoreCS);
+      bool updated = false;
+      FOR_VECTOR (i, g_Store.Items)
+      {
+        if (g_Store.Items[i]->Url == url)
+        {
+          if (g_Store.Items[i]->Missing)
+            g_Store.Items[i]->LastCheckedMs = NowMs();
+          updated = true;
+          break;
+        }
+      }
+      if (!updated && !cachedMissing)
+      {
+        CDictData *miss = new CDictData();
+        miss->Url = url;
+        miss->Missing = true;
+        miss->LastCheckedMs = NowMs();
+        g_Store.Items.Add(miss);
+      }
+    }
+    if (cached.IsValid())
+    {
+      out = cached;
+      return S_OK;
+    }
     return S_FALSE;
+  }
+
   if (body.Size() == 0 || (UInt64)body.Size() > kDictionarySizeLimit)
+  {
+    if (cached.IsValid()) { out = cached; return S_OK; }
     return S_FALSE;
+  }
   if (cancel && *cancel != 0)
     return E_ABORT;
 
   CByteBuffer decoded;
   if (!DecodeDictionary((const Byte *)body, body.Size(), decoded))
+  {
+    if (cached.IsValid()) { out = cached; return S_OK; }
     return S_FALSE;
+  }
+
+  UNUSED_VAR(needFetch)
+  CDictData *entry = new CDictData();
+  entry->Url = url;
+  entry->Text = decoded;
+  entry->ETag = meta.ETag;
+  entry->LastModified = meta.LastModified;
+  entry->LastCheckedMs = NowMs();
+  entry->Missing = false;
 
   CStoreLock lock(g_StoreCS);
+  bool replaced = false;
   FOR_VECTOR (i, g_Store.Items)
   {
     if (g_Store.Items[i]->Url == url)
     {
-      g_Store.Items[i]->AddRef();
-      out.Attach(g_Store.Items[i]);
-      return S_OK;
+      g_Store.Items[i]->Release();
+      g_Store.Items[i] = entry;
+      replaced = true;
+      break;
     }
   }
-  CDictData *entry = new CDictData();
-  entry->Url = url;
-  entry->Text = decoded;
-  g_Store.Items.Add(entry);
+  if (!replaced)
+    g_Store.Items.Add(entry);
   entry->AddRef();
   out.Attach(entry);
   return S_OK;

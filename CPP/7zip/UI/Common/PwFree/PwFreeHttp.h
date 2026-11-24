@@ -20,6 +20,25 @@
 namespace NPwFree {
 namespace NPwHttp {
 
+struct CResponseMeta
+{
+  UInt32 StatusCode;
+  bool NotModified;
+  UString ETag;
+  UString LastModified;
+
+  CResponseMeta(): StatusCode(0), NotModified(false) {}
+};
+
+/*
+  Conditional HTTP GET with ETag / Last-Modified support.
+  Returns S_OK on HTTP 200 (body filled) or HTTP 304 (meta.NotModified == true).
+  Returns S_FALSE on transport failure, other status, size overflow or timeout.
+*/
+HRESULT GetBytesEx(const UString &url, UInt32 timeoutMs, size_t maxBytes,
+    bool allowHttpFallback, const UString &ifNoneMatch, const UString &ifModifiedSince,
+    CByteBuffer &body, CResponseMeta &meta, UString &errorText);
+
 /*
   Returns S_OK and fills 'body' on HTTP 200 within 'maxBytes'.
   Returns S_FALSE on transport failure, non-200 status, size overflow or timeout.

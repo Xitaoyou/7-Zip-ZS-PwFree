@@ -96,13 +96,43 @@ static void AddError(AString &errorText, const char *tag, DWORD code)
   errorText += temp;
 }
 
+static void QueryHeaderString(HINTERNET request, DWORD infoLevel, UString &out)
+{
+  out.Empty();
+  DWORD size = 0;
+  ::WinHttpQueryHeaders(request, infoLevel, WINHTTP_HEADER_NAME_BY_INDEX,
+      WINHTTP_NO_OUTPUT_BUFFER, &size, WINHTTP_NO_HEADER_INDEX);
+  if (::GetLastError() != ERROR_INSUFFICIENT_BUFFER || size < sizeof(wchar_t) || size > 4096)
+    return;
+  const unsigned chars = (unsigned)(size / sizeof(wchar_t));
+  wchar_t *buf = out.GetBuf(chars);
+  if (::WinHttpQueryHeaders(request, infoLevel, WINHTTP_HEADER_NAME_BY_INDEX,
+      buf, &size, WINHTTP_NO_HEADER_INDEX))
+  {
+    buf[chars - 1] = 0;
+    out.ReleaseBuf_CalcLen(chars);
+  }
+  else
+    out.ReleaseBuf_SetEnd(0);
+}
+
 static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
-    size_t maxBytes, CByteBuffer &body, UString &errorText)
+    size_t maxBytes, const UString &ifNoneMatch, const UString &ifModifiedSince,
+    CByteBuffer &body, CResponseMeta &meta, UString &errorText)
 {
   body.Free();
+  meta = CResponseMeta();
+
   HINTERNET session = ::WinHttpOpen(L"7-Zip-PwFree/1.0",
       WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!session)
+  {
+    // Windows 7 fallback: WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY requires Win8.1+.
+    session = ::WinHttpOpen(L"7-Zip-PwFree/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  }
   if (!session)
   {
     AString temp;
@@ -143,8 +173,24 @@ static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
   ::WinHttpSetOption(request, WINHTTP_OPTION_CONTEXT_VALUE, &contextVal, sizeof(contextVal));
   ::WinHttpSetStatusCallback(request, StatusCallback, WINHTTP_CALLBACK_FLAG_SECURE_FAILURE, 0);
 
+  UString extraHeaders;
+  if (!ifNoneMatch.IsEmpty())
+  {
+    extraHeaders += L"If-None-Match: ";
+    extraHeaders += ifNoneMatch;
+    extraHeaders += L"\r\n";
+  }
+  if (!ifModifiedSince.IsEmpty())
+  {
+    extraHeaders += L"If-Modified-Since: ";
+    extraHeaders += ifModifiedSince;
+    extraHeaders += L"\r\n";
+  }
+
   ::SetLastError(0);
-  bool sent = (::WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+  bool sent = (::WinHttpSendRequest(request,
+      extraHeaders.IsEmpty() ? WINHTTP_NO_ADDITIONAL_HEADERS : (LPCWSTR)extraHeaders,
+      extraHeaders.IsEmpty() ? 0 : (DWORD)-1L,
       WINHTTP_NO_REQUEST_DATA, 0, 0, 0) != FALSE);
   if (sent)
   {
@@ -164,66 +210,79 @@ static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
     DWORD size = sizeof(statusCode);
     if (::WinHttpQueryHeaders(request,
         WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &size, WINHTTP_NO_HEADER_INDEX)
-        && statusCode == 200)
+        WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &size, WINHTTP_NO_HEADER_INDEX))
     {
-      size_t cap = 4096;
-      if (maxBytes < cap)
-        cap = maxBytes;
-      CByteBuffer buf(cap);
-      size_t used = 0;
-      bool readOk = true;
-      for (;;)
+      meta.StatusCode = (UInt32)statusCode;
+      QueryHeaderString(request, WINHTTP_QUERY_ETAG, meta.ETag);
+      QueryHeaderString(request, WINHTTP_QUERY_LAST_MODIFIED, meta.LastModified);
+
+      if (statusCode == 304)
       {
-        DWORD avail = 0;
-        if (!::WinHttpQueryDataAvailable(request, &avail))
-        {
-          AddError(temp, "avail", ::GetLastError());
-          readOk = false;
-          break;
-        }
-        if (avail == 0)
-          break;
-        if ((size_t)avail > maxBytes - used)
-        {
-          AddError(temp, "limit", (DWORD)avail);
-          readOk = false;
-          break;
-        }
-        if (used + avail > cap)
-        {
-          size_t newCap = cap;
-          while (newCap < used + avail)
-          {
-            if (newCap >= maxBytes / 2)
-            {
-              newCap = maxBytes;
-              break;
-            }
-            newCap *= 2;
-          }
-          if (newCap < used + avail)
-            newCap = used + avail;
-          buf.ChangeSize_KeepData(newCap, used);
-          cap = newCap;
-        }
-        DWORD read = 0;
-        if (!::WinHttpReadData(request, (Byte *)buf + used, avail, &read))
-        {
-          AddError(temp, "read", ::GetLastError());
-          readOk = false;
-          break;
-        }
-        if (read == 0)
-          break;
-        used += read;
-      }
-      if (readOk)
-      {
-        buf.ChangeSize_KeepData(used, used);
-        body = buf;
+        meta.NotModified = true;
         result = S_OK;
       }
+      else if (statusCode == 200)
+      {
+        size_t cap = 4096;
+        if (maxBytes < cap)
+          cap = maxBytes;
+        CByteBuffer buf(cap);
+        size_t used = 0;
+        bool readOk = true;
+        for (;;)
+        {
+          DWORD avail = 0;
+          if (!::WinHttpQueryDataAvailable(request, &avail))
+          {
+            AddError(temp, "avail", ::GetLastError());
+            readOk = false;
+            break;
+          }
+          if (avail == 0)
+            break;
+          if ((size_t)avail > maxBytes - used)
+          {
+            AddError(temp, "limit", (DWORD)avail);
+            readOk = false;
+            break;
+          }
+          if (used + avail > cap)
+          {
+            size_t newCap = cap;
+            while (newCap < used + avail)
+            {
+              if (newCap >= maxBytes / 2)
+              {
+                newCap = maxBytes;
+                break;
+              }
+              newCap *= 2;
+            }
+            if (newCap < used + avail)
+              newCap = used + avail;
+            buf.ChangeSize_KeepData(newCap, used);
+            cap = newCap;
+          }
+          DWORD read = 0;
+          if (!::WinHttpReadData(request, (Byte *)buf + used, avail, &read))
+          {
+            AddError(temp, "read", ::GetLastError());
+            readOk = false;
+            break;
+          }
+          if (read == 0)
+            break;
+          used += read;
+        }
+        if (readOk)
+        {
+          buf.ChangeSize_KeepData(used, used);
+          body = buf;
+          result = S_OK;
+        }
+      }
+      else
+        AddError(temp, "status", statusCode);
     }
     else
       AddError(temp, "status", statusCode);
@@ -242,10 +301,12 @@ static HRESULT FetchOnce(const CUrlParts &parts, UInt32 timeoutMs,
   return result;
 }
 
-HRESULT GetBytes(const UString &url, UInt32 timeoutMs, size_t maxBytes,
-    bool allowHttpFallback, CByteBuffer &body, UString &errorText)
+HRESULT GetBytesEx(const UString &url, UInt32 timeoutMs, size_t maxBytes,
+    bool allowHttpFallback, const UString &ifNoneMatch, const UString &ifModifiedSince,
+    CByteBuffer &body, CResponseMeta &meta, UString &errorText)
 {
   body.Free();
+  meta = CResponseMeta();
   errorText.Empty();
 
   if (maxBytes == 0)
@@ -261,7 +322,8 @@ HRESULT GetBytes(const UString &url, UInt32 timeoutMs, size_t maxBytes,
     return S_FALSE;
   }
 
-  HRESULT result = FetchOnce(parts, timeoutMs, maxBytes, body, errorText);
+  HRESULT result = FetchOnce(parts, timeoutMs, maxBytes, ifNoneMatch, ifModifiedSince,
+      body, meta, errorText);
   if (result == S_OK || !parts.Https || !allowHttpFallback)
     return result;
 
@@ -283,14 +345,26 @@ HRESULT GetBytes(const UString &url, UInt32 timeoutMs, size_t maxBytes,
 
   UString httpError;
   CByteBuffer httpBody;
-  const HRESULT httpResult = FetchOnce(httpParts, timeoutMs, maxBytes, httpBody, httpError);
+  CResponseMeta httpMeta;
+  const HRESULT httpResult = FetchOnce(httpParts, timeoutMs, maxBytes,
+      ifNoneMatch, ifModifiedSince, httpBody, httpMeta, httpError);
   if (httpResult == S_OK)
   {
     body = httpBody;
+    meta = httpMeta;
     errorText.Empty();
     return S_OK;
   }
   return result;
+}
+
+HRESULT GetBytes(const UString &url, UInt32 timeoutMs, size_t maxBytes,
+    bool allowHttpFallback, CByteBuffer &body, UString &errorText)
+{
+  CResponseMeta meta;
+  UString empty;
+  return GetBytesEx(url, timeoutMs, maxBytes, allowHttpFallback, empty, empty,
+      body, meta, errorText);
 }
 
 HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body,
@@ -307,6 +381,18 @@ HRESULT Get(const UString &url, UInt32 timeoutMs, AString &body,
 }
 
 #else
+
+HRESULT GetBytesEx(const UString &url, UInt32 timeoutMs, size_t maxBytes,
+    bool allowHttpFallback, const UString &ifNoneMatch, const UString &ifModifiedSince,
+    CByteBuffer &body, CResponseMeta &meta, UString &errorText)
+{
+  UNUSED_VAR(url) UNUSED_VAR(timeoutMs) UNUSED_VAR(maxBytes) UNUSED_VAR(allowHttpFallback)
+  UNUSED_VAR(ifNoneMatch) UNUSED_VAR(ifModifiedSince)
+  body.Free();
+  meta = CResponseMeta();
+  errorText = L"not supported";
+  return S_FALSE;
+}
 
 HRESULT GetBytes(const UString &url, UInt32 timeoutMs, size_t maxBytes,
     bool allowHttpFallback, CByteBuffer &body, UString &errorText)
