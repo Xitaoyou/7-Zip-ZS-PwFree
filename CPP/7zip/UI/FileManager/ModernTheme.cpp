@@ -5,6 +5,7 @@
 #include <CommCtrl.h>
 
 #include "ModernTheme.h"
+#include "../Common/UiLang.h"
 
 #ifdef ZIP7_DARKMODE
 #include "../../../../DarkMode/lib/include/Darkmodelib.h"
@@ -28,6 +29,7 @@ const DWORD kDwmwcpRound = 2;
 
 const wchar_t * const kPropOrigHeaderProc = L"7zFM_OrigHeaderProc";
 const wchar_t * const kPropOrigStatusProc = L"7zFM_OrigStatusProc";
+const wchar_t * const kPropRowHeightIL = L"7zFM_RowHeightIL";
 
 struct CFontCacheEntry
 {
@@ -343,39 +345,41 @@ CPalette GetPalette()
   p.IsDark = IsDarkThemeActive();
   if (p.IsDark)
   {
-    p.BgSurface     = RGB(32, 32, 32);
-    p.BgContent     = RGB(25, 25, 25);
-    p.BgHeader      = RGB(36, 36, 36);
-    p.BgHover       = RGB(48, 48, 48);
-    p.BgPressed     = RGB(58, 58, 58);
-    p.BgSelected    = RGB(43, 61, 84);
-    p.BorderSubtle  = RGB(54, 54, 54);
-    p.TextPrimary   = RGB(243, 243, 243);
-    p.TextSecondary = RGB(166, 166, 166);
-    p.Accent        = RGB(96, 205, 255);
-    p.AccentBg      = RGB(30, 58, 76);
-    p.PillBg        = RGB(30, 62, 82);
-    p.PillText      = RGB(130, 218, 255);
-    p.Danger        = RGB(248, 113, 113);
-    p.Success       = RGB(74, 222, 128);
+    // macOS / Arc minimalist cool charcoal dark palette
+    p.BgSurface     = RGB(22, 23, 26);    // #16171A
+    p.BgContent     = RGB(29, 31, 35);    // #1D1F23
+    p.BgHeader      = RGB(22, 23, 26);    // #16171A
+    p.BgHover       = RGB(39, 42, 48);    // #272A30
+    p.BgPressed     = RGB(50, 54, 62);    // #32363E
+    p.BgSelected    = RGB(35, 52, 77);    // #23344D
+    p.BorderSubtle  = RGB(42, 45, 52);    // #2A2D34
+    p.TextPrimary   = RGB(241, 243, 245); // #F1F3F5
+    p.TextSecondary = RGB(156, 163, 175); // #9CA3AF
+    p.Accent        = RGB(96, 165, 250);  // #60A5FA
+    p.AccentBg      = RGB(35, 52, 77);    // #23344D
+    p.PillBg        = RGB(30, 58, 95);    // #1E3A5F
+    p.PillText      = RGB(147, 197, 253); // #93C5FD
+    p.Danger        = RGB(248, 113, 113); // #F87171
+    p.Success       = RGB(74, 222, 128);  // #4ADE80
   }
   else
   {
-    p.BgSurface     = RGB(249, 249, 249);
-    p.BgContent     = RGB(255, 255, 255);
-    p.BgHeader      = RGB(246, 247, 249);
-    p.BgHover       = RGB(236, 238, 241);
-    p.BgPressed     = RGB(224, 228, 233);
-    p.BgSelected    = RGB(229, 243, 255);
-    p.BorderSubtle  = RGB(229, 231, 235);
-    p.TextPrimary   = RGB(26, 26, 26);
-    p.TextSecondary = RGB(102, 108, 117);
-    p.Accent        = RGB(0, 103, 192);
-    p.AccentBg      = RGB(229, 243, 255);
-    p.PillBg        = RGB(227, 242, 253);
-    p.PillText      = RGB(0, 90, 170);
-    p.Danger        = RGB(209, 52, 56);
-    p.Success       = RGB(16, 124, 65);
+    // macOS / Arc minimalist cool mist-gray light palette
+    p.BgSurface     = RGB(243, 244, 246); // #F3F4F6
+    p.BgContent     = RGB(255, 255, 255); // #FFFFFF
+    p.BgHeader      = RGB(243, 244, 246); // #F3F4F6
+    p.BgHover       = RGB(230, 232, 236); // #E6E8EC
+    p.BgPressed     = RGB(216, 220, 227); // #D8DCE3
+    p.BgSelected    = RGB(232, 241, 253); // #E8F1FD
+    p.BorderSubtle  = RGB(228, 230, 235); // #E4E6EB
+    p.TextPrimary   = RGB(24, 26, 31);    // #181A1F
+    p.TextSecondary = RGB(107, 114, 128); // #6B7280
+    p.Accent        = RGB(37, 99, 235);   // #2563EB
+    p.AccentBg      = RGB(232, 241, 253); // #E8F1FD
+    p.PillBg        = RGB(232, 241, 253); // #E8F1FD
+    p.PillText      = RGB(29, 78, 216);   // #1D4ED8
+    p.Danger        = RGB(220, 38, 38);   // #DC2626
+    p.Success       = RGB(22, 163, 74);   // #16A34A
   }
   return p;
 }
@@ -419,7 +423,7 @@ HFONT GetCachedUiFont(UINT dpi, int pointSize10, int weight)
   lf.lfWeight = weight;
   lf.lfCharSet = DEFAULT_CHARSET;
   lf.lfQuality = CLEARTYPE_QUALITY;
-  wcscpy_s(lf.lfFaceName, LF_FACESIZE, L"Segoe UI");
+  wcscpy_s(lf.lfFaceName, LF_FACESIZE, NUiLang::IsZhCn() ? L"Microsoft YaHei UI" : L"Segoe UI");
   HFONT hFont = ::CreateFontIndirectW(&lf);
   if (hFont && g_FontCacheCount < kMaxCachedFonts)
   {
@@ -479,6 +483,21 @@ void StyleListView(HWND hListView)
   HFONT font = GetCachedUiFont(dpi, 95, FW_NORMAL);
   if (font)
     ::SendMessageW(hListView, WM_SETFONT, (WPARAM)font, TRUE);
+
+  // Enforce airy 28dip row height in Details view using a 1px-wide state image list
+  // (never overrides LVSIL_SMALL real system icons).
+  {
+    const int rowH = ScaleDip(28, dpi);
+    HIMAGELIST oldIL = (HIMAGELIST)::GetPropW(hListView, kPropRowHeightIL);
+    HIMAGELIST newIL = ::ImageList_Create(1, rowH, ILC_COLOR32, 1, 0);
+    if (newIL)
+    {
+      ListView_SetImageList(hListView, newIL, LVSIL_STATE);
+      ::SetPropW(hListView, kPropRowHeightIL, (HANDLE)newIL);
+      if (oldIL)
+        ::ImageList_Destroy(oldIL);
+    }
+  }
 
   ApplyUxTheme(hListView, pal.IsDark ? L"DarkMode_Explorer" : L"Explorer");
 

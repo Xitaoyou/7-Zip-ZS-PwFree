@@ -91,11 +91,13 @@ UI_COMMON_OBJS = \
   $O\ExtractingFilePath.obj \
   $O\HashCalc2.obj \
   $O\LoadCodecs.obj \
+  $O\ModernExtractDialog.obj \
   $O\OpenArchive.obj \
   $O\PropIDUtils.obj \
   $O\SetProperties.obj \
   $O\SortUtils.obj \
   $O\TempFiles.obj \
+  $O\UiLang.obj \
   $O\Update.obj \
   $O\UpdateAction.obj \
   $O\UpdateCallback.obj \
@@ -116,6 +118,7 @@ FM_OBJS = \
   $O\LangUtils.obj \
   $O\ListViewDialog.obj \
   $O\MemDialog.obj \
+  $O\ModernTheme.obj \
   $O\OpenCallback.obj \
   $O\ProgramLocation.obj \
   $O\PropertyName.obj \

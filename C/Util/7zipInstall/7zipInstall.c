@@ -626,12 +626,23 @@ static void Set7zipPostfix(WCHAR *s)
 
 static int Install(void);
 
+static BoolInt IsZhCnUi(void)
+{
+  #ifndef UNDER_CE
+  return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+  #else
+  return False;
+  #endif
+}
+
 static void OnClose(void)
 {
   if (g_Install_was_Pressed && !g_Finished)
   {
     if (MessageBoxW(g_HWND,
-        L"Do you want to cancel " k_7zip_with_Ver L" installation?",
+        IsZhCnUi()
+          ? L"\x786E\x5B9A\x8981\x53D6\x6D88 " k_7zip_with_Ver L" \x5B89\x88C5\x5417\xFF1F"
+          : L"Do you want to cancel " k_7zip_with_Ver L" installation?",
         k_7zip_with_Ver,
         MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) != IDYES)
       return;
@@ -658,7 +669,15 @@ CALLBACK MyDlgProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
       g_InfoLine_HWND = GetDlgItem(hwnd, IDT_CUR_FILE);
       g_Progress_HWND = GetDlgItem(hwnd, IDC_PROGRESS);
 
-      SetWindowTextW(hwnd, k_7zip_Setup);
+      SetWindowTextW(hwnd, IsZhCnUi()
+          ? (k_7zip_with_Ver L" \x5B89\x88C5\x5411\x5BFC")
+          : k_7zip_Setup);
+      if (IsZhCnUi())
+      {
+        SetDlgItemTextW(hwnd, IDT_EXTRACT_EXTRACT_TO, L"\x76EE\x6807\x6587\x4EF6\x5939:");
+        SetDlgItemTextW(hwnd, IDOK, L"\x5B89\x88C5(&I)");
+        SetDlgItemTextW(hwnd, IDCANCEL, L"\x53D6\x6D88");
+      }
       SetDlgItemTextW(hwnd, IDE_EXTRACT_PATH, path);
 
       ShowWindow(g_Progress_HWND, SW_HIDE);
@@ -703,7 +722,8 @@ CALLBACK MyDlgProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
           WCHAR s[MAX_PATH];
           WCHAR s2[MAX_PATH];
           GetDlgItemTextW(hwnd, IDE_EXTRACT_PATH, s, MAX_PATH);
-          if (MyBrowseForFolder(hwnd, L"Select the folder for installation:" ,
+          if (MyBrowseForFolder(hwnd,
+              IsZhCnUi() ? L"\x8BF7\x9009\x62E9\x5B89\x88C5\x6587\x4EF6\x5939:" : L"Select the folder for installation:",
               0
               | BIF_NEWDIALOGSTYLE // 5.0 of ?.dll ?
               | BIF_RETURNONLYFSDIRS
@@ -900,6 +920,85 @@ static LPCSTR const k_ShellEx_Items[] =
   , "Directory\\shellex\\DragDropHandlers"
   , "Drive\\shellex\\DragDropHandlers"
 };
+
+static LPCWSTR const k_SupportedExts[] =
+{
+  L".zip", L".7z", L".rar", L".tar", L".gz", L".tgz",
+  L".xz", L".txz", L".zst", L".tzst", L".bz2", L".iso",
+  L".cab", L".wim", L".br", L".lz4", L".lz5", L".liz"
+};
+
+static void WriteOpenWithAndDefaultApps(void)
+{
+  WCHAR exePath[MAX_PATH + 40];
+  WCHAR iconPath[MAX_PATH + 48];
+  WCHAR openCmd[MAX_PATH + 64];
+  HKEY hKey = 0;
+  unsigned i;
+
+  wcscpy(exePath, path);
+  CatAscii(exePath, "7zFM.exe");
+
+  wcscpy(iconPath, exePath);
+  CatAscii(iconPath, ",0");
+
+  openCmd[0] = L'\"';
+  wcscpy(openCmd + 1, exePath);
+  CatAscii(openCmd, "\" \"%1\"");
+
+  /* 1. HKLM\SOFTWARE\Classes\Applications\7zFM.exe */
+  if (MyRegistry_CreateKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe", &hKey) == ERROR_SUCCESS)
+  {
+    MyRegistry_SetString(hKey, L"FriendlyAppName", L"UnlockZip");
+    RegCloseKey(hKey);
+  }
+  MyRegistry_CreateKeyAndVal(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\DefaultIcon", NULL, iconPath);
+  MyRegistry_CreateKeyAndVal(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\shell\\open\\command", NULL, openCmd);
+  if (MyRegistry_CreateKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\SupportedTypes", &hKey) == ERROR_SUCCESS)
+  {
+    for (i = 0; i < Z7_ARRAY_SIZE(k_SupportedExts); i++)
+      MyRegistry_SetString(hKey, k_SupportedExts[i], L"");
+    RegCloseKey(hKey);
+  }
+
+  /* 2. HKLM\SOFTWARE\Classes\UnlockZip.Archive ProgID */
+  MyRegistry_CreateKeyAndVal(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive", NULL, L"UnlockZip Archive");
+  MyRegistry_CreateKeyAndVal(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive\\DefaultIcon", NULL, iconPath);
+  MyRegistry_CreateKeyAndVal(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive\\shell\\open\\command", NULL, openCmd);
+
+  /* 3. .<ext>\OpenWithProgids -> UnlockZip.Archive */
+  for (i = 0; i < Z7_ARRAY_SIZE(k_SupportedExts); i++)
+  {
+    WCHAR extKey[128];
+    wcscpy(extKey, L"Software\\Classes\\");
+    wcscat(extKey, k_SupportedExts[i]);
+    wcscat(extKey, L"\\OpenWithProgids");
+    if (MyRegistry_CreateKey(HKEY_LOCAL_MACHINE, extKey, &hKey) == ERROR_SUCCESS)
+    {
+      RegSetValueExW(hKey, L"UnlockZip.Archive", 0, REG_NONE, NULL, 0);
+      RegCloseKey(hKey);
+    }
+  }
+
+  /* 4. Default Programs / Capabilities + RegisteredApplications */
+  if (MyRegistry_CreateKey(HKEY_LOCAL_MACHINE, L"Software\\UnlockZip\\Capabilities", &hKey) == ERROR_SUCCESS)
+  {
+    MyRegistry_SetString(hKey, L"ApplicationName", L"UnlockZip");
+    MyRegistry_SetString(hKey, L"ApplicationDescription", L"UnlockZip Modern Archive Manager with PwFree Auto-Unlock");
+    RegCloseKey(hKey);
+  }
+  if (MyRegistry_CreateKey(HKEY_LOCAL_MACHINE, L"Software\\UnlockZip\\Capabilities\\FileAssociations", &hKey) == ERROR_SUCCESS)
+  {
+    for (i = 0; i < Z7_ARRAY_SIZE(k_SupportedExts); i++)
+      MyRegistry_SetString(hKey, k_SupportedExts[i], L"UnlockZip.Archive");
+    RegCloseKey(hKey);
+  }
+  MyRegistry_CreateKeyAndVal(HKEY_LOCAL_MACHINE, L"Software\\RegisteredApplications", L"UnlockZip", L"Software\\UnlockZip\\Capabilities");
+
+  #ifndef UNDER_CE
+  SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+  #endif
+}
 
 static void WriteShellEx(void)
 {
@@ -1214,7 +1313,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           if (!g_HWND)
             break;
           {
-            SetDlgItemTextW(g_HWND, IDOK, L"Close");
+            SetDlgItemTextW(g_HWND, IDOK, IsZhCnUi() ? L"\x5173\x95ED" : L"Close");
             EnableWindow(GetDlgItem(g_HWND, IDOK), TRUE);
             EnableWindow(GetDlgItem(g_HWND, IDCANCEL), FALSE);
             SendMessage(g_HWND, WM_NEXTDLGCTL, (WPARAM)(void *)GetDlgItem(g_HWND, IDOK), TRUE);
@@ -1610,10 +1709,13 @@ if (res == SZ_OK)
       SetRegKey_Path();
       WriteCLSID();
       WriteShellEx();
+      WriteOpenWithAndDefaultApps();
       
       SetShellProgramsGroup(g_HWND);
       if (!g_SilentMode)
-        SetWindowTextW(g_InfoLine_HWND, k_7zip_with_Ver L" is installed");
+        SetWindowTextW(g_InfoLine_HWND, IsZhCnUi()
+            ? (k_7zip_with_Ver L" \x5DF2\x5B89\x88C5\x5B8C\x6210")
+            : (k_7zip_with_Ver L" is installed"));
     }
   }
 

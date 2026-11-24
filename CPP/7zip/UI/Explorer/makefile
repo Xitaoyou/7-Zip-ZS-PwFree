@@ -59,6 +59,7 @@ UI_COMMON_OBJS = \
   $O\ArchiveName.obj \
   $O\CompressCall.obj \
   $O\ExtractingFilePath.obj \
+  $O\UiLang.obj \
   $O\ZipRegistry.obj \
 
 FM_OBJS = \

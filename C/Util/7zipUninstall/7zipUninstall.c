@@ -394,7 +394,7 @@ static void SetShellProgramsGroup(HWND hwndOwner)
       continue;
 
     NormalizePrefix(link);
-    CatAscii(link, "7-Zip-Zstandard\\");
+    CatAscii(link, "UnlockZip\\");
     
     {
       const size_t baseLen = wcslen(link);
@@ -462,6 +462,71 @@ static BoolInt AreEqual_Path_PrefixName(const WCHAR *s, const WCHAR *prefix, con
   if (!IsString1PrefixedByString2_NoCase(s, prefix))
     return False;
   return AreStringsEqual_NoCase(s + wcslen(prefix), name);
+}
+
+static BoolInt IsZhCnUi(void)
+{
+  #ifndef UNDER_CE
+  return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+  #else
+  return False;
+  #endif
+}
+
+static LPCWSTR const k_SupportedExts[] =
+{
+  L".zip", L".7z", L".rar", L".tar", L".gz", L".tgz",
+  L".xz", L".txz", L".zst", L".tzst", L".bz2", L".iso",
+  L".cab", L".wim", L".br", L".lz4", L".lz5", L".liz"
+};
+
+static void CleanOpenWithAndDefaultApps(void)
+{
+  HKEY hKey = 0;
+  unsigned i;
+
+  /* 1. Applications\7zFM.exe */
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\SupportedTypes");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\shell\\open\\command");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\shell\\open");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\shell");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe\\DefaultIcon");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\Applications\\7zFM.exe");
+
+  /* 2. UnlockZip.Archive ProgID */
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive\\shell\\open\\command");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive\\shell\\open");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive\\shell");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive\\DefaultIcon");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\Classes\\UnlockZip.Archive");
+
+  /* 3. Remove UnlockZip.Archive from .<ext>\OpenWithProgids */
+  for (i = 0; i < Z7_ARRAY_SIZE(k_SupportedExts); i++)
+  {
+    WCHAR extKey[128];
+    wcscpy(extKey, L"Software\\Classes\\");
+    wcscat(extKey, k_SupportedExts[i]);
+    wcscat(extKey, L"\\OpenWithProgids");
+    if (MyRegistry_OpenKey_ReadWrite(HKEY_LOCAL_MACHINE, extKey, &hKey) == ERROR_SUCCESS)
+    {
+      RegDeleteValueW(hKey, L"UnlockZip.Archive");
+      RegCloseKey(hKey);
+    }
+  }
+
+  /* 4. Capabilities & RegisteredApplications */
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\UnlockZip\\Capabilities\\FileAssociations");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\UnlockZip\\Capabilities");
+  MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, L"Software\\UnlockZip");
+  if (MyRegistry_OpenKey_ReadWrite(HKEY_LOCAL_MACHINE, L"Software\\RegisteredApplications", &hKey) == ERROR_SUCCESS)
+  {
+    RegDeleteValueW(hKey, L"UnlockZip");
+    RegCloseKey(hKey);
+  }
+
+  #ifndef UNDER_CE
+  SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+  #endif
 }
 
 static void WriteCLSID(void)
@@ -541,12 +606,14 @@ static void WriteCLSID(void)
   
   #endif
 
-
   if (MyRegistry_QueryString2(HKEY_LOCAL_MACHINE, k_AppPaths_7zFm, NULL, s))
   {
     // RemoveQuotes(s);
     if (AreEqual_Path_PrefixName(s, path, L"7zFM.exe"))
+    {
       MyRegistry_DeleteKey(HKEY_LOCAL_MACHINE, k_AppPaths_7zFm);
+      CleanOpenWithAndDefaultApps();
+    }
   }
 
   if (MyRegistry_QueryString2(HKEY_LOCAL_MACHINE, k_Uninstall_7zip, L"UninstallString", s))
@@ -818,7 +885,9 @@ static int Install(void)
       WriteCLSID();
       SetShellProgramsGroup(g_HWND);
       if (!g_SilentMode)
-        SetWindowTextW(g_InfoLine_HWND, k_7zip_with_Ver L" is uninstalled");
+        SetWindowTextW(g_InfoLine_HWND, IsZhCnUi()
+            ? (k_7zip_with_Ver L" \x5DF2\x5378\x8F7D\x5B8C\x6210")
+            : (k_7zip_with_Ver L" is uninstalled"));
     }
   }
 
@@ -849,7 +918,9 @@ static void OnClose(void)
   if (g_Install_was_Pressed && !g_Finished)
   {
     if (MessageBoxW(g_HWND,
-        L"Do you want to cancel uninstallation?",
+        IsZhCnUi()
+          ? L"\x786E\x5B9A\x8981\x53D6\x6D88\x5378\x8F7D\x5417\xFF1F"
+          : L"Do you want to cancel uninstallation?",
         k_7zip_with_Ver_Uninstall,
         MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) != IDYES)
       return;
@@ -875,7 +946,15 @@ CALLBACK MyDlgProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
       g_InfoLine_HWND = GetDlgItem(hwnd, IDT_CUR_FILE);
       g_Progress_HWND = GetDlgItem(hwnd, IDC_PROGRESS);
 
-      SetWindowTextW(hwnd, k_7zip_with_Ver_Uninstall);
+      SetWindowTextW(hwnd, IsZhCnUi()
+          ? (k_7zip_with_Ver L" \x5378\x8F7D")
+          : k_7zip_with_Ver_Uninstall);
+      if (IsZhCnUi())
+      {
+        SetDlgItemTextW(hwnd, IDT_EXTRACT_EXTRACT_TO, L"\x5378\x8F7D\x8DEF\x5F84:");
+        SetDlgItemTextW(hwnd, IDOK, L"\x5378\x8F7D(&U)");
+        SetDlgItemTextW(hwnd, IDCANCEL, L"\x53D6\x6D88");
+      }
       SetDlgItemTextW(hwnd, IDE_EXTRACT_PATH, path);
 
       ShowWindow(g_Progress_HWND, SW_HIDE);
@@ -1217,7 +1296,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           if (!g_HWND)
             break;
           {
-            SetDlgItemTextW(g_HWND, IDOK, L"Close");
+            SetDlgItemTextW(g_HWND, IDOK, IsZhCnUi() ? L"\x5173\x95ED" : L"Close");
             EnableWindow(GetDlgItem(g_HWND, IDOK), TRUE);
             EnableWindow(GetDlgItem(g_HWND, IDCANCEL), FALSE);
             SendMessage(g_HWND, WM_NEXTDLGCTL, (WPARAM)(void *)GetDlgItem(g_HWND, IDOK), TRUE);

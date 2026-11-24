@@ -24,6 +24,7 @@
 #include "IFolder.h"
 #include "LangUtils.h"
 #include "ModernTheme.h"
+#include "../Common/ModernExtractDialog.h"
 #include "MyLoadMenu.h"
 #include "RegistryUtils.h"
 #include "ViewSettings.h"
@@ -616,7 +617,45 @@ void CApp::OnCopy(bool move, bool copyToSame, unsigned srcPanelIndex)
   ReadCopyHistory(copyFolders);
   
   const bool useFullItemPaths = srcPanel.Is_IO_FS_Folder(); // maybe we need flat also here ??
+  bool deleteArchiveAfterExtract = false;
+  UString parentArchiveFilePath;
 
+  if (!move && !copyToSame && !srcPanel.Is_IO_FS_Folder())
+  {
+    if (!srcPanel._parentFolders.IsEmpty() && !srcPanel._parentFolders[0].IsVirtual)
+      parentArchiveFilePath = fs2us(srcPanel._parentFolders[0].FilePath);
+
+    CRecordVector<UInt32> selectedIndices;
+    srcPanel.Get_ItemIndices_Operated(selectedIndices);
+
+    NModernUI::CModernExtractOptions mopt;
+    mopt.TargetDir = destPath;
+    mopt.ArchivePath = parentArchiveFilePath;
+    mopt.CanSelectFiles = !selectedIndices.IsEmpty();
+    mopt.ExtractSelectedOnly = !selectedIndices.IsEmpty();
+    mopt.ShowAdvancedLink = false;
+
+    if (NModernUI::ShowModernExtractDialog(srcPanel.GetParent(), mopt) != NModernUI::kExtractOk)
+      return;
+
+    destPath = mopt.TargetDir;
+    if (mopt.ExtractToArchiveFolder && !parentArchiveFilePath.IsEmpty())
+      NModernUI::AppendArchiveNameSubfolder(destPath, parentArchiveFilePath);
+    deleteArchiveAfterExtract = mopt.DeleteArchiveAfterExtract;
+
+    if (!mopt.ExtractSelectedOnly)
+    {
+      indices.Clear();
+      srcPanel.Get_ItemIndices_All(indices);
+      if (indices.IsEmpty())
+        return;
+    }
+    else if (!selectedIndices.IsEmpty())
+    {
+      indices = selectedIndices;
+    }
+  }
+  else
   {
     CCopyDialog copyDialog;
 
@@ -838,6 +877,18 @@ void CApp::OnCopy(bool move, bool copyToSame, unsigned srcPanelIndex)
     if (result != E_ABORT)
       srcPanel.MessageBox_Error_HRESULT(result);
     // return;
+  }
+  else if (deleteArchiveAfterExtract && !parentArchiveFilePath.IsEmpty())
+  {
+    // Close archive handle by navigating to its parent directory before moving to Recycle Bin.
+    int sep = parentArchiveFilePath.ReverseFind_PathSepar();
+    UString parentDir = (sep >= 0) ? parentArchiveFilePath.Left((unsigned)sep + 1) : UString();
+    if (!parentDir.IsEmpty())
+    {
+      srcPanel.BindToPathAndRefresh(parentDir);
+      NModernUI::MoveFileToRecycleBin(parentArchiveFilePath);
+      srcPanel.RefreshListCtrl();
+    }
   }
 
   RefreshTitleAlways();

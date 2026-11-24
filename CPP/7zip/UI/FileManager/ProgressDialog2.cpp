@@ -20,6 +20,11 @@
 #include "ProgressDialog2.h"
 #include "ProgressDialog2Res.h"
 
+#ifndef Z7_SFX
+#include "ModernTheme.h"
+#include "../Common/UiLang.h"
+#endif
+
 #ifdef ZIP7_DARKMODE
 #include "../../../../DarkMode/lib/include/Darkmodelib.h"
 #endif
@@ -37,6 +42,8 @@ static const UINT kCloseMessage = WM_APP + 1;
 static const UINT kTimerElapse =
   #ifdef UNDER_CE
   500
+  #elif !defined(Z7_SFX)
+  33
   #else
   200
   #endif
@@ -45,6 +52,8 @@ static const UINT kTimerElapse =
 static const UINT kCreateDelay =
   #ifdef UNDER_CE
   2500
+  #elif !defined(Z7_SFX)
+  120
   #else
   500
   #endif
@@ -335,9 +344,25 @@ static void ReduceString(UString &s, unsigned size)
 
 void CProgressDialog::EnableErrorsControls(bool enable)
 {
+  #ifdef Z7_SFX
   ShowItem_Bool(IDT_PROGRESS_ERRORS, enable);
   ShowItem_Bool(IDT_PROGRESS_ERRORS_VAL, enable);
   ShowItem_Bool(IDL_PROGRESS_MESSAGES, enable);
+  #else
+  ShowItem_Bool(IDL_PROGRESS_MESSAGES, enable);
+  if (enable)
+  {
+    const UINT dpi = NModernUI::GetDpiForHwnd(*this);
+    RECT wr;
+    if (::GetWindowRect(*this, &wr))
+    {
+      const int minH = NModernUI::ScaleDip(330, dpi);
+      if (wr.bottom - wr.top < minH)
+        ::SetWindowPos(*this, NULL, 0, 0, wr.right - wr.left, minH,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+  }
+  #endif
 }
 
 bool CProgressDialog::OnInit()
@@ -423,6 +448,56 @@ bool CProgressDialog::OnInit()
     // SetIcon(ICON_SMALL, icon);
     SetIcon(ICON_BIG, icon);
   }
+
+  #ifndef Z7_SFX
+  {
+    NModernUI::ApplyWindowChrome(*this);
+    const UINT hideIds[] = {
+      IDT_PROGRESS_ELAPSED,   IDT_PROGRESS_ELAPSED_VAL,
+      IDT_PROGRESS_REMAINING, IDT_PROGRESS_REMAINING_VAL,
+      IDT_PROGRESS_FILES,     IDT_PROGRESS_FILES_VAL,
+      IDT_PROGRESS_FILES_TOTAL,
+      IDT_PROGRESS_ERRORS,    IDT_PROGRESS_ERRORS_VAL,
+      IDT_PROGRESS_TOTAL,     IDT_PROGRESS_TOTAL_VAL,
+      IDT_PROGRESS_SPEED,     IDT_PROGRESS_SPEED_VAL,
+      IDT_PROGRESS_PROCESSED, IDT_PROGRESS_PROCESSED_VAL,
+      IDT_PROGRESS_PACKED,    IDT_PROGRESS_PACKED_VAL,
+      IDT_PROGRESS_RATIO,     IDT_PROGRESS_RATIO_VAL,
+      IDT_PROGRESS_STATUS,    IDT_PROGRESS_FILE_NAME,
+      IDC_PROGRESS1
+    };
+    for (unsigned i = 0; i < Z7_ARRAY_SIZE(hideIds); i++)
+      HideItem((int)hideIds[i]);
+
+    const UINT dpi = NModernUI::GetDpiForHwnd(*this);
+    HFONT uiFont = NModernUI::GetCachedUiFont(dpi, 90, FW_NORMAL);
+    if (uiFont)
+    {
+      ::SendMessageW(GetItem(IDB_PROGRESS_BACKGROUND), WM_SETFONT, (WPARAM)uiFont, FALSE);
+      ::SendMessageW(GetItem(IDB_PAUSE), WM_SETFONT, (WPARAM)uiFont, FALSE);
+      ::SendMessageW(GetItem(IDCANCEL), WM_SETFONT, (WPARAM)uiFont, FALSE);
+    }
+
+    const int w = NModernUI::ScaleDip(480, dpi);
+    const int h = NModernUI::ScaleDip(206, dpi);
+    RECT workArea = { 0, 0, 1280, 800 };
+    ::SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+    int x = workArea.left + (workArea.right - workArea.left - w) / 2;
+    int y = workArea.top + (workArea.bottom - workArea.top - h) / 2;
+    HWND parent = GetParent();
+    if (parent && ::IsWindowVisible(parent))
+    {
+      RECT pr;
+      if (::GetWindowRect(parent, &pr))
+      {
+        x = pr.left + (pr.right - pr.left - w) / 2;
+        y = pr.top + (pr.bottom - pr.top - h) / 2;
+      }
+    }
+    ::SetWindowPos(*this, NULL, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+  #endif
+
   _timer = SetTimer(kTimerID, kTimerElapse);
   #ifdef UNDER_CE
   Foreground();
@@ -452,6 +527,31 @@ static const UINT kIDs[] =
 
 bool CProgressDialog::OnSize(WPARAM /* wParam */, int xSize, int ySize)
 {
+  #ifndef Z7_SFX
+  {
+    const UINT dpi = NModernUI::GetDpiForHwnd(*this);
+    const int pad = NModernUI::ScaleDip(18, dpi);
+    const int btnW = NModernUI::ScaleDip(82, dpi);
+    const int btnH = NModernUI::ScaleDip(28, dpi);
+    const int gap = NModernUI::ScaleDip(8, dpi);
+    const int btnY = ySize - pad - btnH;
+
+    int xPos = xSize - pad - btnW;
+    MoveItem(IDCANCEL, xPos, btnY, btnW, btnH);
+    xPos -= (btnW + gap);
+    MoveItem(IDB_PAUSE, xPos, btnY, btnW, btnH);
+    xPos -= (btnW + gap);
+    MoveItem(IDB_PROGRESS_BACKGROUND, xPos, btnY, btnW, btnH);
+
+    const int msgTop = NModernUI::ScaleDip(122, dpi);
+    const int msgH = btnY - NModernUI::ScaleDip(10, dpi) - msgTop;
+    if (msgH > 20)
+      _messageList.Move(pad, msgTop, xSize - pad * 2, msgH);
+
+    ::InvalidateRect(*this, NULL, FALSE);
+    return false;
+  }
+  #else
   int sY;
   int sStep;
   int mx, my;
@@ -570,6 +670,7 @@ bool CProgressDialog::OnSize(WPARAM /* wParam */, int xSize, int ySize)
     yPos += sStep;
   }
   return false;
+  #endif
 }
 
 void CProgressDialog::OnCancel() { Sync.Set_Stopped(true); }
@@ -935,6 +1036,29 @@ void CProgressDialog::UpdateStatInfo(bool showAll)
     s1 += s2;
     SetItemText(IDT_PROGRESS_FILE_NAME, s1);
   }
+
+  #ifndef Z7_SFX
+  {
+    // Update percent smoothly on every 33ms tick and repaint upper Bandizip canvas.
+    if (IS_DEFINED_VAL(progressTotal) && progressTotal != 0)
+    {
+      const UInt64 pct = (progressCompleted >= progressTotal)
+          ? 100u : (progressCompleted * 100u / progressTotal);
+      if (pct != _prevPercentValue)
+      {
+        _prevPercentValue = pct;
+        SetTitleText();
+      }
+    }
+    RECT rc;
+    if (::GetClientRect(*this, &rc))
+    {
+      const UINT dpi = NModernUI::GetDpiForHwnd(*this);
+      rc.bottom = NModernUI::ScaleDip(122, dpi);
+      ::InvalidateRect(*this, &rc, FALSE);
+    }
+  }
+  #endif
 }
 
 bool CProgressDialog::OnTimer(WPARAM /* timerID */, LPARAM /* callback */)
@@ -1029,7 +1153,7 @@ bool CProgressDialog::OnExternalCloseMessage()
   {
     MessagesDisplayed = true;
     if (fm.ErrorMessage.Title.IsEmpty())
-      fm.ErrorMessage.Title = "7-Zip";
+      fm.ErrorMessage.Title = "UnlockZip";
     if (!g_DisableUserQuestions)
     { 
 #ifdef ZIP7_DARKMODE
@@ -1046,7 +1170,7 @@ bool CProgressDialog::OnExternalCloseMessage()
     if (!fm.OkMessage.Message.IsEmpty())
     {
       if (fm.OkMessage.Title.IsEmpty())
-        fm.OkMessage.Title = "7-Zip";
+        fm.OkMessage.Title = "UnlockZip";
       if (!g_DisableUserQuestions)
       {
 #ifdef ZIP7_DARKMODE
@@ -1070,10 +1194,194 @@ bool CProgressDialog::OnExternalCloseMessage()
   return true;
 }
 
+#ifndef Z7_SFX
+static UString FormatHumanBytes(UInt64 v)
+{
+  wchar_t buf[64];
+  if (v >= ((UInt64)1 << 30))
+  {
+    const UInt64 whole = v >> 30;
+    const UInt64 frac = ((v & (((UInt64)1 << 30) - 1)) * 10) >> 30;
+    wsprintfW(buf, L"%I64u.%u GB", whole, (unsigned)frac);
+  }
+  else if (v >= ((UInt64)1 << 20))
+  {
+    const UInt64 whole = v >> 20;
+    const UInt64 frac = ((v & (((UInt64)1 << 20) - 1)) * 10) >> 20;
+    wsprintfW(buf, L"%I64u.%u MB", whole, (unsigned)frac);
+  }
+  else if (v >= ((UInt64)1 << 10))
+  {
+    wsprintfW(buf, L"%I64u KB", v >> 10);
+  }
+  else
+  {
+    wsprintfW(buf, L"%I64u B", v);
+  }
+  return UString(buf);
+}
+#endif
+
 bool CProgressDialog::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
 {
   switch (message)
   {
+    #ifndef Z7_SFX
+    case WM_ERASEBKGND:
+      return true;
+
+    case WM_PAINT:
+    {
+      PAINTSTRUCT ps;
+      HDC hdc = ::BeginPaint(*this, &ps);
+      RECT rc;
+      ::GetClientRect(*this, &rc);
+      if (rc.right > 0 && rc.bottom > 0)
+      {
+        HDC memDC = ::CreateCompatibleDC(hdc);
+        HBITMAP memBmp = ::CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
+        HGDIOBJ oldBmp = ::SelectObject(memDC, memBmp);
+
+        const NModernUI::CPalette pal = NModernUI::GetPalette();
+        const UINT dpi = NModernUI::GetDpiForHwnd(*this);
+        const int pad = NModernUI::ScaleDip(18, dpi);
+
+        HBRUSH bgBr = ::CreateSolidBrush(pal.BgSurface);
+        ::FillRect(memDC, &rc, bgBr);
+        ::DeleteObject(bgBr);
+
+        ::SetBkMode(memDC, TRANSPARENT);
+
+        // 1. Header row: Status label (left) + Big Percentage (right)
+        UString headerText = !_status.IsEmpty() ? _status : _title;
+        if (Sync.Get_Paused())
+        {
+          headerText += L"  (";
+          headerText += _paused_String;
+          headerText += L")";
+        }
+
+        HFONT titleFont = NModernUI::GetCachedUiFont(dpi, 105, FW_SEMIBOLD);
+        HFONT pctFont = NModernUI::GetCachedUiFont(dpi, 170, FW_BOLD);
+        HFONT fileFont = NModernUI::GetCachedUiFont(dpi, 92, FW_NORMAL);
+        HFONT statFont = NModernUI::GetCachedUiFont(dpi, 86, FW_NORMAL);
+
+        HGDIOBJ oldFont = titleFont ? ::SelectObject(memDC, titleFont) : NULL;
+
+        RECT hdrLeft = { pad, NModernUI::ScaleDip(16, dpi), rc.right - pad - NModernUI::ScaleDip(80, dpi), NModernUI::ScaleDip(44, dpi) };
+        ::SetTextColor(memDC, pal.TextPrimary);
+        ::DrawTextW(memDC, headerText, -1, &hdrLeft, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        wchar_t pctBuf[32];
+        const UInt64 pctVal = IS_DEFINED_VAL(_prevPercentValue) ? _prevPercentValue : 0u;
+        wsprintfW(pctBuf, L"%I64u%%", pctVal);
+        if (pctFont)
+          ::SelectObject(memDC, pctFont);
+        RECT hdrRight = { rc.right - pad - NModernUI::ScaleDip(90, dpi), NModernUI::ScaleDip(12, dpi), rc.right - pad, NModernUI::ScaleDip(46, dpi) };
+        ::SetTextColor(memDC, _errorsWereDisplayed ? pal.Danger : pal.Accent);
+        ::DrawTextW(memDC, pctBuf, -1, &hdrRight, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // 2. Smooth rounded progress bar
+        const int barTop = NModernUI::ScaleDip(52, dpi);
+        const int barH = NModernUI::ScaleDip(10, dpi);
+        const int barRad = barH / 2;
+        RECT trackRc = { pad, barTop, rc.right - pad, barTop + barH };
+        NModernUI::FillRoundRectGdi(memDC, trackRc, barRad, pal.BorderSubtle, pal.BorderSubtle, false);
+
+        double frac = 0.0;
+        if (IS_DEFINED_VAL(_progressBar_Range) && _progressBar_Range > 0 && IS_DEFINED_VAL(_progressBar_Pos))
+        {
+          frac = (double)_progressBar_Pos / (double)_progressBar_Range;
+          if (frac < 0.0) frac = 0.0;
+          if (frac > 1.0) frac = 1.0;
+        }
+        else if (IS_DEFINED_VAL(_prevPercentValue))
+        {
+          frac = (double)_prevPercentValue / 100.0;
+          if (frac > 1.0) frac = 1.0;
+        }
+
+        const int fillW = (int)((double)(trackRc.right - trackRc.left) * frac + 0.5);
+        if (fillW > 2)
+        {
+          RECT fillRc = trackRc;
+          fillRc.right = trackRc.left + ((fillW < barH) ? barH : fillW);
+          if (fillRc.right > trackRc.right)
+            fillRc.right = trackRc.right;
+          COLORREF fillClr = pal.Accent;
+          if (_errorsWereDisplayed)
+            fillClr = pal.Danger;
+          else if (Sync.Get_Paused())
+            fillClr = RGB(217, 119, 6);
+          NModernUI::FillRoundRectGdi(memDC, fillRc, barRad, fillClr, fillClr, false);
+        }
+
+        // 3. Rapidly skipping current file path (30fps Bandizip feel)
+        if (fileFont)
+          ::SelectObject(memDC, fileFont);
+        RECT fileRc = { pad, NModernUI::ScaleDip(72, dpi), rc.right - pad, NModernUI::ScaleDip(92, dpi) };
+        ::SetTextColor(memDC, pal.TextPrimary);
+        const wchar_t *curFile = _filePath.IsEmpty()
+            ? NUiLang::Tr(L"Preparing...", L"\x6B63\x5728\x51C6\x5907...")
+            : (const wchar_t *)_filePath;
+        ::DrawTextW(memDC, curFile, -1, &fileRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS | DT_NOPREFIX);
+
+        // 4. Compact single-line stats: Processed / Total · Speed · Remaining
+        UString stats;
+        if (IS_DEFINED_VAL(_processed_Prev) && IS_DEFINED_VAL(_totalBytes_Prev) && _totalBytes_Prev > 0)
+        {
+          stats += FormatHumanBytes(_processed_Prev);
+          stats += L" / ";
+          stats += FormatHumanBytes(_totalBytes_Prev);
+        }
+        else if (IS_DEFINED_VAL(_processed_Prev))
+        {
+          stats += FormatHumanBytes(_processed_Prev);
+        }
+
+        if (IS_DEFINED_VAL(_prevSpeed) && _prevSpeed > 0)
+        {
+          if (!stats.IsEmpty())
+            stats += L"  \x00B7  ";
+          wchar_t sp[48];
+          if (_prevSpeed_MoveBits == 20)
+            wsprintfW(sp, L"%I64u MB/s", _prevSpeed);
+          else if (_prevSpeed_MoveBits == 10)
+            wsprintfW(sp, L"%I64u KB/s", _prevSpeed);
+          else
+            wsprintfW(sp, L"%I64u B/s", _prevSpeed);
+          stats += sp;
+        }
+
+        if (IS_DEFINED_VAL(_prevRemainingSec))
+        {
+          if (!stats.IsEmpty())
+            stats += L"  \x00B7  ";
+          stats += NUiLang::Tr(L"Remaining ", L"\x5269\x4F59 ");
+          wchar_t rem[40];
+          GetTimeString(_prevRemainingSec, rem);
+          stats += rem;
+        }
+
+        if (statFont)
+          ::SelectObject(memDC, statFont);
+        RECT statRc = { pad, NModernUI::ScaleDip(96, dpi), rc.right - pad, NModernUI::ScaleDip(116, dpi) };
+        ::SetTextColor(memDC, pal.TextSecondary);
+        ::DrawTextW(memDC, stats, -1, &statRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        if (oldFont)
+          ::SelectObject(memDC, oldFont);
+
+        ::BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);
+        ::SelectObject(memDC, oldBmp);
+        ::DeleteObject(memBmp);
+        ::DeleteDC(memDC);
+      }
+      ::EndPaint(*this, &ps);
+      return true;
+    }
+    #endif
+
     case kCloseMessage:
     {
       if (_timer)

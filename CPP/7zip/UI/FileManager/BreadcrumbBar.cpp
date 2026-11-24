@@ -4,6 +4,7 @@
 
 #include "ModernTheme.h"
 #include "BreadcrumbBar.h"
+#include "../Common/UiLang.h"
 
 extern HINSTANCE g_hInstance;
 
@@ -118,7 +119,7 @@ void CBreadcrumbBar::RebuildSegments()
   if (_path.IsEmpty())
   {
     CBreadcrumbSeg &root = _segments.AddNew();
-    root.Label = L"Computer";
+    root.Label = NUiLang::Tr(L"This PC", L"\x6B64\x7535\x8111");
     root.FullPath.Empty();
     return;
   }

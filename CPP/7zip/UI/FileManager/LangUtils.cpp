@@ -10,6 +10,7 @@
 
 #include "LangUtils.h"
 #include "RegistryUtils.h"
+#include "../Common/UiLang.h"
 
 using namespace NWindows;
 
@@ -46,9 +47,19 @@ void LoadLangOneTime()
   ReloadLang();
 }
 
-void LangSetDlgItemText(HWND dialog, UInt32 controlID, UInt32 langID)
+static const wchar_t *GetLangText(UInt32 langID)
 {
   const wchar_t *s = g_Lang.Get(langID);
+  if (s)
+    return s;
+  if (NUiLang::IsZhCn())
+    return NUiLang::LookupBuiltinZhCn(langID);
+  return NULL;
+}
+
+void LangSetDlgItemText(HWND dialog, UInt32 controlID, UInt32 langID)
+{
+  const wchar_t *s = GetLangText(langID);
   if (s)
   {
     CWindow window(GetDlgItem(dialog, (int)controlID));
@@ -81,7 +92,7 @@ void LangSetDlgItems(HWND dialog, const UInt32 *ids, unsigned numItems)
     CWindow window(GetDlgItem(dialog, (int)pair.ControlID));
     if (window)
     {
-      const wchar_t *s = g_Lang.Get(pair.LangID);
+      const wchar_t *s = GetLangText(pair.LangID);
       if (s)
         window.SetText(s);
     }
@@ -99,7 +110,7 @@ void LangSetDlgItems_Colon(HWND dialog, const UInt32 *ids, unsigned numItems)
   for (unsigned i = 0; i < numItems; i++)
   {
     const UInt32 id = ids[i];
-    const wchar_t *s = g_Lang.Get(id);
+    const wchar_t *s = GetLangText(id);
     if (s)
     {
       CWindow window(GetDlgItem(dialog, (int)id));
@@ -115,7 +126,7 @@ void LangSetDlgItems_RemoveColon(HWND dialog, const UInt32 *ids, unsigned numIte
   for (unsigned i = 0; i < numItems; i++)
   {
     const UInt32 id = ids[i];
-    const wchar_t *s = g_Lang.Get(id);
+    const wchar_t *s = GetLangText(id);
     if (s)
     {
       CWindow window(GetDlgItem(dialog, (int)id));
@@ -129,14 +140,14 @@ void LangSetDlgItems_RemoveColon(HWND dialog, const UInt32 *ids, unsigned numIte
 
 void LangSetWindowText(HWND window, UInt32 langID)
 {
-  const wchar_t *s = g_Lang.Get(langID);
+  const wchar_t *s = GetLangText(langID);
   if (s)
     MySetWindowText(window, s);
 }
 
 UString LangString(UInt32 langID)
 {
-  const wchar_t *s = g_Lang.Get(langID);
+  const wchar_t *s = GetLangText(langID);
   if (s)
     return s;
   return MyLoadString(langID);
@@ -149,7 +160,7 @@ void AddLangString(UString &s, UInt32 langID)
 
 void LangString(UInt32 langID, UString &dest)
 {
-  const wchar_t *s = g_Lang.Get(langID);
+  const wchar_t *s = GetLangText(langID);
   if (s)
   {
     dest = s;
@@ -161,7 +172,7 @@ void LangString(UInt32 langID, UString &dest)
 void LangString_OnlyFromLangFile(UInt32 langID, UString &dest)
 {
   dest.Empty();
-  const wchar_t *s = g_Lang.Get(langID);
+  const wchar_t *s = GetLangText(langID);
   if (s)
     dest = s;
 }

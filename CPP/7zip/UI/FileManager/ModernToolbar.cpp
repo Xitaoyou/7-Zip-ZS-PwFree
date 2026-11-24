@@ -355,10 +355,8 @@ void CModernToolbar::OnPaint()
 
   HPEN divPen = ::CreatePen(PS_SOLID, 1, pal.BorderSubtle);
   HGDIOBJ oldPen = ::SelectObject(memDC, divPen);
-  ::MoveToEx(memDC, rc.left, rc.bottom - 1, NULL);
-  ::LineTo(memDC, rc.right, rc.bottom - 1);
 
-  const int radius = ScaleDip(6, dpi);
+  const int radius = ScaleDip(8, dpi);
   const int iconSize = ScaleDip(_largeIcons ? 22 : 18, dpi);
 
   FOR_VECTOR (i, _items)

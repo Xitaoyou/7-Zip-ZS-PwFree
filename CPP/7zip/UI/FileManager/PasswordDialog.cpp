@@ -3,6 +3,9 @@
 #include "StdAfx.h"
 
 #include "PasswordDialog.h"
+#ifndef Z7_SFX
+#include "ModernTheme.h"
+#endif
 
 #ifdef Z7_LANG
 #include "LangUtils.h"
@@ -30,6 +33,9 @@ void CPasswordDialog::SetTextSpec()
 
 bool CPasswordDialog::OnInit()
 {
+  #ifndef Z7_SFX
+  NModernUI::ApplyWindowChrome(*this);
+  #endif
   #ifdef Z7_LANG
   LangSetWindowText(*this, IDD_PASSWORD);
   LangSetDlgItems(*this, kLangIDs, Z7_ARRAY_SIZE(kLangIDs));

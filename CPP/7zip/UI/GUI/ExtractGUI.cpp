@@ -26,6 +26,7 @@
 
 #include "ExtractDialog.h"
 #include "ExtractGUI.h"
+#include "../Common/ModernExtractDialog.h"
 #include "HashGUI.h"
 
 #include "../FileManager/PropertyNameRes.h"
@@ -221,6 +222,7 @@ HRESULT ExtractGUI(
 
 #ifndef Z7_SFX
   bool OpnTrgFold = false;
+  bool deleteArchiveAfter = false;
 #endif
   if (!options.TestMode)
   {
@@ -231,7 +233,6 @@ HRESULT ExtractGUI(
     #endif
     if (showDialog)
     {
-      CExtractDialog dialog;
       FString outputDirFull;
       if (!MyGetFullPathName(outputDir, outputDirFull))
       {
@@ -241,40 +242,77 @@ HRESULT ExtractGUI(
       }
       NName::NormalizeDirPathPrefix(outputDirFull);
 
-      dialog.DirPath = fs2us(outputDirFull);
-
-      dialog.OverwriteMode = options.OverwriteMode;
-      dialog.OverwriteMode_Force = options.OverwriteMode_Force;
-      dialog.PathMode = options.PathMode;
-      dialog.PathMode_Force = options.PathMode_Force;
-      dialog.ElimDup = options.ElimDup;
-
-      if (archivePathsFull.Size() == 1)
-        dialog.ArcPath = archivePathsFull[0];
-
       #ifndef Z7_SFX
-      // dialog.AltStreams = options.NtOptions.AltStreams;
-      dialog.NtSecurity = options.NtOptions.NtSecurity;
-      if (extractCallback->PasswordIsDefined)
-        dialog.Password = extractCallback->Password;
+      bool useAdvancedDialog = false;
+      {
+        NModernUI::CModernExtractOptions mopt;
+        mopt.TargetDir = fs2us(outputDirFull);
+        if (archivePathsFull.Size() == 1)
+          mopt.ArchivePath = archivePathsFull[0];
+        mopt.CanSelectFiles = false;
+        mopt.ShowAdvancedLink = true;
+
+        const NModernUI::EExtractDialogResult mres =
+            NModernUI::ShowModernExtractDialog(hwndParent, mopt);
+        if (mres == NModernUI::kExtractCancel)
+          return E_ABORT;
+        if (mres == NModernUI::kExtractAdvanced)
+        {
+          useAdvancedDialog = true;
+          if (!mopt.TargetDir.IsEmpty())
+          {
+            outputDirFull = us2fs(mopt.TargetDir);
+            NName::NormalizeDirPathPrefix(outputDirFull);
+          }
+        }
+        else
+        {
+          UString chosenDir = mopt.TargetDir;
+          if (mopt.ExtractToArchiveFolder && archivePathsFull.Size() == 1)
+            NModernUI::AppendArchiveNameSubfolder(chosenDir, archivePathsFull[0]);
+          outputDir = us2fs(chosenDir);
+          deleteArchiveAfter = mopt.DeleteArchiveAfterExtract;
+        }
+      }
+      if (useAdvancedDialog)
       #endif
+      {
+        CExtractDialog dialog;
+        dialog.DirPath = fs2us(outputDirFull);
 
-      if (dialog.Create(hwndParent) != IDOK)
-        return E_ABORT;
+        dialog.OverwriteMode = options.OverwriteMode;
+        dialog.OverwriteMode_Force = options.OverwriteMode_Force;
+        dialog.PathMode = options.PathMode;
+        dialog.PathMode_Force = options.PathMode_Force;
+        dialog.ElimDup = options.ElimDup;
 
-      outputDir = us2fs(dialog.DirPath);
+        if (archivePathsFull.Size() == 1)
+          dialog.ArcPath = archivePathsFull[0];
 
-      options.OverwriteMode = dialog.OverwriteMode;
-      options.PathMode = dialog.PathMode;
-      options.ElimDup = dialog.ElimDup;
-      
-      #ifndef Z7_SFX
-      OpnTrgFold = dialog.OpnTrgFold.Val;
-      // options.NtOptions.AltStreams = dialog.AltStreams;
-      options.NtOptions.NtSecurity = dialog.NtSecurity;
-      extractCallback->Password = dialog.Password;
-      extractCallback->PasswordIsDefined = !dialog.Password.IsEmpty();
-      #endif
+        #ifndef Z7_SFX
+        // dialog.AltStreams = options.NtOptions.AltStreams;
+        dialog.NtSecurity = options.NtOptions.NtSecurity;
+        if (extractCallback->PasswordIsDefined)
+          dialog.Password = extractCallback->Password;
+        #endif
+
+        if (dialog.Create(hwndParent) != IDOK)
+          return E_ABORT;
+
+        outputDir = us2fs(dialog.DirPath);
+
+        options.OverwriteMode = dialog.OverwriteMode;
+        options.PathMode = dialog.PathMode;
+        options.ElimDup = dialog.ElimDup;
+        
+        #ifndef Z7_SFX
+        OpnTrgFold = dialog.OpnTrgFold.Val;
+        // options.NtOptions.AltStreams = dialog.AltStreams;
+        options.NtOptions.NtSecurity = dialog.NtSecurity;
+        extractCallback->Password = dialog.Password;
+        extractCallback->PasswordIsDefined = !dialog.Password.IsEmpty();
+        #endif
+      }
     }
     #ifndef Z7_SFX
     else if (!options.OutputDir.IsEmpty()) // don't open target folder if extract here
@@ -334,6 +372,13 @@ HRESULT ExtractGUI(
   messageWasDisplayed = extracter.ThreadFinishedOK && extracter.MessagesDisplayed;
 
 #ifndef Z7_SFX
+  // Safely move original archive(s) to Recycle Bin only on completely error-free extraction.
+  if (deleteArchiveAfter && extracter.Result == S_OK && extractCallback->IsOK())
+  {
+    FOR_VECTOR (i, archivePathsFull)
+      NModernUI::MoveFileToRecycleBin(archivePathsFull[i]);
+  }
+
   // browse/navigate to target path:
   if (OpnTrgFold && extracter.Result == S_OK) {
     // obtain path (directory or file) from first extracted:
