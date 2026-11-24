@@ -24,7 +24,7 @@ public:
   unsigned CostClass() const { return 0; }
   const char *Name() const { return "zipcrypto"; }
 
-  bool Check(const Byte *password, size_t size)
+  bool Check(const Byte *password, size_t size) const
   {
     if (!_ok)
       return false;
@@ -54,7 +54,7 @@ public:
   unsigned CostClass() const { return 1; }
   const char *Name() const { return "winzipaes"; }
 
-  bool Check(const Byte *password, size_t size)
+  bool Check(const Byte *password, size_t size) const
   {
     if (!_ok)
       return false;
@@ -87,7 +87,7 @@ public:
 
   const char *Name() const { return _probe.ModeName(); }
 
-  bool Check(const Byte *password, size_t size)
+  bool Check(const Byte *password, size_t size) const
   {
     if (!_ok)
       return false;

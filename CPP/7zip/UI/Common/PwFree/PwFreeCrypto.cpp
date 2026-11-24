@@ -2,6 +2,8 @@
 
 #include "PwFreeCrypto.h"
 
+#include "../../../../../C/Sha256.h"
+
 #ifdef _WIN32
 #include <bcrypt.h>
 #include "../../../../Windows/Synchronization.h"
@@ -76,7 +78,6 @@ static BCRYPT_ALG_HANDLE GetCachedAlg(CCachedAlg &a)
 
 static CCachedAlg g_AlgMd5      = { NULL, false, BCRYPT_MD5_ALGORITHM, 0 };
 static CCachedAlg g_AlgSha1Hmac = { NULL, false, BCRYPT_SHA1_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG };
-static CCachedAlg g_AlgSha256   = { NULL, false, BCRYPT_SHA256_ALGORITHM, 0 };
 static CCachedAlg g_AlgAes      = { NULL, false, BCRYPT_AES_ALGORITHM, 0 };
 static CCachedAlg g_AlgDes      = { NULL, false, BCRYPT_DES_ALGORITHM, 0 };
 
@@ -423,47 +424,68 @@ bool Des_Ecb_Decrypt(const Byte *key8, Byte *data, size_t size)
 
 /* ---------------- SHA-256 ---------------- */
 
+static void EnsureSha256Prepared()
+{
+  static bool prepared = false;
+  if (prepared)
+    return;
+#ifdef _WIN32
+  g_AlgCS.Enter();
+  if (!prepared)
+  {
+    Sha256Prepare();
+    prepared = true;
+  }
+  g_AlgCS.Leave();
+#else
+  Sha256Prepare();
+  prepared = true;
+#endif
+}
+
 bool Sha256_Calc(const void *data, size_t size, Byte *digest)
 {
-#ifdef _WIN32
-  return Hash_Calc(GetCachedAlg(g_AlgSha256), NULL, 0, data, size, digest, 32);
-#else
-  UNUSED_VAR(data)
-  UNUSED_VAR(size)
-  UNUSED_VAR(digest)
-  return false;
-#endif
+  EnsureSha256Prepared();
+  CSha256 sha;
+  Sha256_Init(&sha);
+  Sha256_Update(&sha, (const Byte *)data, size);
+  Sha256_Final(&sha, digest);
+  return true;
 }
 
 bool Sha256_Kdf7z(const Byte *saltPassword, size_t size,
     unsigned numCyclesPower, Byte *key)
 {
-#ifdef _WIN32
   /*
-    The loop hashes 2^power buffers that differ only in their last eight bytes,
-    so they are prepared in blocks and handed to one hash stream. The block is
-    small enough to stay in cache and large enough to keep the hash busy.
+    Uses 7-Zip's native SHA-256 implementation (SHA-NI assembly on x86/x64,
+    ARMv8 crypto extensions on ARM64) with zero CNG overhead and zero heap
+    allocation for typical password lengths.
   */
-  const unsigned kUnroll = 32;
+  const unsigned kUnroll = 64;
   const size_t itemSize = size + 8;
   if (numCyclesPower > 24 || itemSize > ((size_t)1 << 16))
     return false;
 
-  CByteBuffer buf;
-  buf.Alloc(itemSize * kUnroll);
-  Byte *p = buf;
+  EnsureSha256Prepared();
+
+  Byte stackBuf[4096];
+  CByteBuffer heapBuf;
+  Byte *p = stackBuf;
+  if (itemSize * kUnroll > sizeof(stackBuf))
+  {
+    heapBuf.Alloc(itemSize * kUnroll);
+    p = heapBuf;
+  }
+
   for (unsigned i = 0; i < kUnroll; i++)
   {
-    memcpy(p + i * itemSize, saltPassword, size);
+    if (size != 0)
+      memcpy(p + i * itemSize, saltPassword, size);
     memset(p + i * itemSize + size, 0, 8);
   }
 
-  BCRYPT_ALG_HANDLE alg = GetCachedAlg(g_AlgSha256);
-  if (!alg)
-    return false;
-  CHashHandle hash;
-  if (!hash.Create(alg, NULL, 0))
-    return false;
+  CSha256 sha;
+  Sha256_Init(&sha);
 
   const UInt64 total = (UInt64)1 << numCyclesPower;
   for (UInt64 done = 0; done < total;)
@@ -477,23 +499,17 @@ bool Sha256_Kdf7z(const Byte *saltPassword, size_t size,
       q[1] = (Byte)(counter >> 8);
       q[2] = (Byte)(counter >> 16);
       q[3] = (Byte)(counter >> 24);
-      q[4] = 0;
-      q[5] = 0;
-      q[6] = 0;
-      q[7] = 0;
     }
-    if (!hash.Add(p, itemSize * step))
-      return false;
+    Sha256_Update(&sha, p, itemSize * step);
     done += step;
   }
-  return hash.Finish(key, 32);
-#else
-  UNUSED_VAR(saltPassword)
-  UNUSED_VAR(size)
-  UNUSED_VAR(numCyclesPower)
-  UNUSED_VAR(key)
-  return false;
-#endif
+  Sha256_Final(&sha, key);
+
+  if (p == stackBuf)
+    SecureZero(stackBuf, itemSize * kUnroll);
+  else
+    SecureZero(p, itemSize * kUnroll);
+  return true;
 }
 
 /* ---------------- AES ---------------- */

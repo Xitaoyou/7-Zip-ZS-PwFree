@@ -311,6 +311,192 @@ public:
   }
 };
 
+#ifdef _WIN32
+
+/* ---------------- multi-threaded verification pool ---------------- */
+
+class CVerifyPool
+{
+  static const unsigned kMaxWorkers = 16;
+
+  const IVerify *_verify;
+  volatile long *_cancel;
+  UInt64 _deadline;
+
+  const CObjectVector<AString> *_batch;
+  volatile long _nextIdx;
+  volatile long _found;
+  long _matchIndex;
+  volatile long _stopPool;
+  volatile long _batchSeq;
+  volatile long _activeWorkers;
+
+  HANDLE _threads[kMaxWorkers];
+  HANDLE _wakeEvent;
+  HANDLE _doneEvent;
+  unsigned _numWorkers;
+
+  void RunWorkerLoop(long &seenSeq)
+  {
+    for (;;)
+    {
+      while (_batchSeq == seenSeq && _stopPool == 0)
+        ::WaitForSingleObject(_wakeEvent, INFINITE);
+      if (_stopPool != 0)
+        break;
+      seenSeq = _batchSeq;
+
+      const long total = (long)_batch->Size();
+      for (;;)
+      {
+        if (_found != 0 || IsCancelled(_cancel))
+          break;
+        if (_deadline != 0 && Now() >= _deadline)
+          break;
+        const long idx = ::InterlockedIncrement(&_nextIdx) - 1;
+        if (idx >= total)
+          break;
+        const AString &u8 = (*_batch)[(unsigned)idx];
+        if (_verify->Check((const Byte *)(const char *)u8, u8.Len()))
+        {
+          if (::InterlockedCompareExchange(&_found, 1, 0) == 0)
+            _matchIndex = idx;
+          break;
+        }
+      }
+
+      if (::InterlockedDecrement(&_activeWorkers) == 0)
+        ::SetEvent(_doneEvent);
+    }
+  }
+
+  static DWORD WINAPI WorkerThreadProc(LPVOID param)
+  {
+    CVerifyPool *self = (CVerifyPool *)param;
+    long seenSeq = 0;
+    self->RunWorkerLoop(seenSeq);
+    return 0;
+  }
+
+  CVerifyPool(const CVerifyPool &) = delete;
+  CVerifyPool &operator=(const CVerifyPool &) = delete;
+
+public:
+  CVerifyPool():
+      _verify(NULL), _cancel(NULL), _deadline(0), _batch(NULL),
+      _nextIdx(0), _found(0), _matchIndex(-1), _stopPool(0),
+      _batchSeq(0), _activeWorkers(0),
+      _wakeEvent(NULL), _doneEvent(NULL), _numWorkers(0)
+  {
+    memset(_threads, 0, sizeof(_threads));
+  }
+
+  ~CVerifyPool()
+  {
+    Stop();
+  }
+
+  unsigned Start(const IVerify &verify, volatile long *cancel, UInt64 deadline)
+  {
+    Stop();
+    SYSTEM_INFO si;
+    ::GetSystemInfo(&si);
+    unsigned cores = (unsigned)si.dwNumberOfProcessors;
+    if (cores < 2)
+      return 1;
+    if (cores > kMaxWorkers)
+      cores = kMaxWorkers;
+
+    _verify = &verify;
+    _cancel = cancel;
+    _deadline = deadline;
+    _stopPool = 0;
+    _batchSeq = 0;
+    _found = 0;
+    _matchIndex = -1;
+
+    _wakeEvent = ::CreateEventW(NULL, TRUE, FALSE, NULL);
+    _doneEvent = ::CreateEventW(NULL, TRUE, TRUE, NULL);
+    if (!_wakeEvent || !_doneEvent)
+    {
+      Stop();
+      return 1;
+    }
+
+    // Spawn (cores - 1) helper threads; the caller thread also participates.
+    const unsigned helpers = cores - 1;
+    for (unsigned i = 0; i < helpers; i++)
+    {
+      HANDLE h = ::CreateThread(NULL, 0, WorkerThreadProc, this, 0, NULL);
+      if (!h)
+        break;
+      _threads[_numWorkers++] = h;
+    }
+    return _numWorkers + 1;
+  }
+
+  void Stop()
+  {
+    if (_numWorkers != 0)
+    {
+      ::InterlockedExchange(&_stopPool, 1);
+      if (_wakeEvent)
+        ::SetEvent(_wakeEvent);
+      ::WaitForMultipleObjects(_numWorkers, _threads, TRUE, INFINITE);
+      for (unsigned i = 0; i < _numWorkers; i++)
+      {
+        ::CloseHandle(_threads[i]);
+        _threads[i] = NULL;
+      }
+      _numWorkers = 0;
+    }
+    if (_wakeEvent) { ::CloseHandle(_wakeEvent); _wakeEvent = NULL; }
+    if (_doneEvent) { ::CloseHandle(_doneEvent); _doneEvent = NULL; }
+  }
+
+  // Returns index of matching candidate in 'batch', or -1 if none matched.
+  int RunBatch(const CObjectVector<AString> &batch)
+  {
+    if (batch.IsEmpty())
+      return -1;
+    _batch = &batch;
+    _nextIdx = 0;
+    _found = 0;
+    _matchIndex = -1;
+    _activeWorkers = (long)_numWorkers;
+    ::ResetEvent(_doneEvent);
+    ::InterlockedIncrement(&_batchSeq);
+    ::SetEvent(_wakeEvent);
+
+    // Caller thread works alongside helper threads.
+    const long total = (long)batch.Size();
+    for (;;)
+    {
+      if (_found != 0 || IsCancelled(_cancel))
+        break;
+      if (_deadline != 0 && Now() >= _deadline)
+        break;
+      const long idx = ::InterlockedIncrement(&_nextIdx) - 1;
+      if (idx >= total)
+        break;
+      const AString &u8 = batch[(unsigned)idx];
+      if (_verify->Check((const Byte *)(const char *)u8, u8.Len()))
+      {
+        if (::InterlockedCompareExchange(&_found, 1, 0) == 0)
+          _matchIndex = idx;
+        break;
+      }
+    }
+
+    if (_numWorkers != 0)
+      ::WaitForSingleObject(_doneEvent, INFINITE);
+    ::ResetEvent(_wakeEvent);
+    return (_found != 0) ? (int)_matchIndex : -1;
+  }
+};
+
+#endif
+
 }
 
 IProvider *CreateSeedProvider(const CRequest &req) { return new CSeedProvider(req); }
@@ -357,6 +543,84 @@ HRESULT RunChain(const CRequest &req, const CSettings &st, IVerify &verify,
     IProvider *const provider = providers[i];
     const UInt64 providerStart = Now();
     const UInt32 budget = provider->BudgetMs();
+    const UInt64 providerDeadline = (budget != 0) ? (providerStart + budget) : 0;
+
+    const char *const provName = provider->Name();
+    const bool usePool =
+        #ifdef _WIN32
+        (verify.CostClass() >= 1) && (strcmp(provName, "dict") == 0 || strcmp(provName, "mask") == 0);
+        #else
+        false;
+        #endif
+
+    #ifdef _WIN32
+    if (usePool)
+    {
+      CVerifyPool pool;
+      const unsigned totalThreads = pool.Start(verify, cancel, providerDeadline);
+      if (totalThreads > 1)
+      {
+        const unsigned batchLimit = totalThreads * 8;
+        CObjectVector<UString> batchRaw;
+        CObjectVector<AString> batchUtf8;
+
+        for (;;)
+        {
+          if (IsCancelled(cancel))
+          {
+            result = E_ABORT;
+            break;
+          }
+          if (providerDeadline != 0 && Now() >= providerDeadline)
+            break;
+
+          batchRaw.Clear();
+          batchUtf8.Clear();
+          bool providerDone = false;
+          for (unsigned b = 0; b < batchLimit; b++)
+          {
+            UString candidate;
+            const HRESULT hr = provider->Next(candidate);
+            if (hr == E_ABORT)
+            {
+              result = E_ABORT;
+              providerDone = true;
+              break;
+            }
+            if (hr != S_OK)
+            {
+              providerDone = true;
+              break;
+            }
+            if (candidate.IsEmpty())
+              continue;
+            AString utf8;
+            ConvertUnicodeToUTF8(candidate, utf8);
+            batchRaw.Add(candidate);
+            batchUtf8.Add(utf8);
+          }
+
+          if (!batchUtf8.IsEmpty() && result != E_ABORT)
+          {
+            const int hit = pool.RunBatch(batchUtf8);
+            if (hit >= 0)
+            {
+              password = batchRaw[(unsigned)hit];
+              providerName = provName;
+              result = S_OK;
+              break;
+            }
+          }
+
+          if (providerDone || result == E_ABORT)
+            break;
+        }
+        pool.Stop();
+        provider->Finish();
+        continue;
+      }
+    }
+    #endif
 
     for (;;)
     {
@@ -385,7 +649,7 @@ HRESULT RunChain(const CRequest &req, const CSettings &st, IVerify &verify,
       if (verify.Check((const Byte *)(const char *)utf8, utf8.Len()))
       {
         password = candidate;
-        providerName = provider->Name();
+        providerName = provName;
         result = S_OK;
         break;
       }

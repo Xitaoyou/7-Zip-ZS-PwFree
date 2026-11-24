@@ -61,3 +61,9 @@ C_OBJS = $(C_OBJS) $O\Lzma2Dec.obj
 !IF "$(C_OBJS:Alloc.obj=)" == "$(C_OBJS)"
 C_OBJS = $(C_OBJS) $O\Alloc.obj
 !ENDIF
+
+# 7-Zip's hardware-accelerated SHA-256 (SHA-NI asm on x86/x64, ARMv8 crypto on ARM64)
+# for fast 7z KDF, added only when the host target does not already link it.
+!IF "$(C_OBJS:Sha256.obj=)" == "$(C_OBJS)"
+!include "../../Sha256.mak"
+!ENDIF

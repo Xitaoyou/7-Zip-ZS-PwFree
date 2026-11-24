@@ -518,7 +518,7 @@ bool CZipCryptoProbe::Init(const FString &path, const CEntryInfo &info)
   return true;
 }
 
-bool CZipCryptoProbe::Check(const Byte *password, size_t passwordSize)
+bool CZipCryptoProbe::Check(const Byte *password, size_t passwordSize) const
 {
   if (!_ok)
     return false;
@@ -539,8 +539,14 @@ bool CZipCryptoProbe::Check(const Byte *password, size_t passwordSize)
   {
     if (_hasCachedData)
       memcpy(data, _cachedData, dataSize);
-    else if (!ReadFileAt(_file, _info.DataOffset + 12, data, dataSize))
-      return false;
+    else
+    {
+      _fileCS.Enter();
+      const bool readOk = ReadFileAt(_file, _info.DataOffset + 12, data, dataSize);
+      _fileCS.Leave();
+      if (!readOk)
+        return false;
+    }
     cipher.Decrypt(data, dataSize);
   }
 
@@ -628,7 +634,7 @@ bool CWinZipAesProbe::Init(const FString &path, const CEntryInfo &info)
   return true;
 }
 
-bool CWinZipAesProbe::Check(const Byte *password, size_t passwordSize)
+bool CWinZipAesProbe::Check(const Byte *password, size_t passwordSize) const
 {
   if (!_ok)
     return false;
@@ -665,7 +671,10 @@ bool CWinZipAesProbe::Check(const Byte *password, size_t passwordSize)
       while (remaining != 0)
       {
         const size_t todo = (remaining > chunk.Size()) ? chunk.Size() : (size_t)remaining;
-        if (!ReadFileAt(_file, pos, chunk, todo) || !hmac.Update(chunk, todo))
+        _fileCS.Enter();
+        const bool readOk = ReadFileAt(_file, pos, chunk, todo);
+        _fileCS.Leave();
+        if (!readOk || !hmac.Update(chunk, todo))
         {
           macOk = false;
           break;

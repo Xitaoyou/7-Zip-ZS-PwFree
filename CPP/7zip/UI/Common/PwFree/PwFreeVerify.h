@@ -36,7 +36,8 @@ public:
   // Human readable id, used in the "where did the password come from" line.
   virtual const char *Name() const = 0;
 
-  virtual bool Check(const Byte *password, size_t size) = 0;
+  // Thread-safe candidate check; may be called concurrently from worker threads.
+  virtual bool Check(const Byte *password, size_t size) const = 0;
 };
 
 /*

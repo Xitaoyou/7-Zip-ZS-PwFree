@@ -8,6 +8,7 @@
 #include "../../../../Common/MyString.h"
 #include "../../../../Common/MyVector.h"
 #include "../../../../Windows/FileIO.h"
+#include "../../../../Windows/Synchronization.h"
 
 /*
   Password probe for the 7z container.
@@ -80,7 +81,8 @@ bool IsSevenZ(const FString &path);
 // Created once per archive; Check() may be called for every candidate.
 class CProbe
 {
-  NWindows::NFile::NIO::CInFile _file;
+  mutable NWindows::NFile::NIO::CInFile _file;
+  mutable NWindows::NSynchronization::CCriticalSection _fileCS;
   UInt64 _fileSize;
 
   // Offset of the 7z signature inside the file. Zero for a plain archive; a
@@ -92,7 +94,6 @@ class CProbe
   unsigned _mode;
 
   CStreams _streams;
-  unsigned _folderIndex;
 
   /*
     A solid archive can hold several encrypted folders and only the one that
@@ -111,39 +112,42 @@ class CProbe
   CCandidate _candidates[4];
   unsigned _numCandidates;
 
-  Byte _iv[16];
-  Byte _salt[16];
-  unsigned _saltSize;
-  unsigned _numCyclesPower;
-
   // CRC the archive stores for its decoded next header.
   UInt32 _headerCrc;
 
-  // Cache of the last decrypted AES block, addressed by its offset inside the
-  // packed stream, so walking a chunk chain costs one block per chunk header.
-  UInt64 _blockPos;
-  bool _blockValid;
-  Byte _block[16];
+  // Per-Check stack state so Check() is 100% thread-safe for worker pools.
+  struct CCheckCtx
+  {
+    unsigned FolderIndex;
+    Byte Iv[16];
+    Byte Salt[16];
+    unsigned SaltSize;
+    unsigned Power;
+    UInt64 BlockPos;
+    bool BlockValid;
+    Byte Block[16];
+  };
 
-  bool ReadAt(UInt64 offset, void *data, size_t size);
-  bool DeriveKey(const Byte *password, size_t size, Byte *key) const;
+  bool ReadAt(UInt64 offset, void *data, size_t size) const;
+  bool DeriveKey(const CCheckCtx &ctx, const Byte *password, size_t size, Byte *key) const;
 
-  bool DecryptRange(const Byte *key, UInt64 packOffset, UInt64 posOffset, Byte *dest, size_t size);
-  bool PlainByte(const Byte *key, UInt64 packOffset, UInt64 pos, unsigned &value);
+  bool DecryptRange(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 posOffset,
+      Byte *dest, size_t size) const;
+  bool PlainByte(CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 pos, unsigned &value) const;
 
   bool PackRange(unsigned folderIndex, UInt64 &offset, UInt64 &size) const;
-  bool WalkChunks(const Byte *key, UInt64 packOffset,
-      UInt64 inputSize, UInt64 outputSize);
-  bool CheckPadding(const Byte *key, UInt64 packOffset,
-      UInt64 inputSize, UInt64 packSize);
-  bool DecodeChain(const Byte *key, UInt64 packOffset, UInt64 packSize,
-      CByteBuffer &dest, UInt64 &destSize);
+  bool WalkChunks(CCheckCtx &ctx, const Byte *key, UInt64 packOffset,
+      UInt64 inputSize, UInt64 outputSize) const;
+  bool CheckPadding(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset,
+      UInt64 inputSize, UInt64 packSize) const;
+  bool DecodeChain(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 packSize,
+      CByteBuffer &dest, UInt64 &destSize) const;
 
-  bool CheckHeader(const Byte *key, UInt64 packOffset, UInt64 packSize);
-  bool CheckPayload(const Byte *key, UInt64 packOffset, UInt64 packSize);
+  bool CheckHeader(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 packSize) const;
+  bool CheckPayload(CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 packSize) const;
 
   bool SelectFolder();
-  void UseCandidate(unsigned index);
+  void LoadCandidate(unsigned index, CCheckCtx &ctx) const;
   bool Open_Header(const Byte *nextHeader, size_t nextHeaderSize);
   bool Open_EncodedHeader(const Byte *nextHeader, size_t nextHeaderSize);
 
@@ -159,8 +163,8 @@ public:
   // check that tells the right password from a wrong one).
   bool Open(const FString &path);
 
-  // True when the password decrypts the probed stream.
-  bool Check(const Byte *password, size_t size);
+  // Thread-safe: true when the password decrypts the probed stream.
+  bool Check(const Byte *password, size_t size) const;
 
   const char *ModeName() const;
 };

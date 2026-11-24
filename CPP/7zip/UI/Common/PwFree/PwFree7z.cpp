@@ -678,18 +678,10 @@ CProbe::CProbe():
     _fileSize(0),
     _baseOffset(0),
     _mode(0),
-    _folderIndex(0),
-    _saltSize(0),
-    _numCyclesPower(0),
-    _headerCrc(0),
-    _blockPos(0),
-    _blockValid(false),
-    _numCandidates(0)
+    _numCandidates(0),
+    _headerCrc(0)
 {
   memset(_candidates, 0, sizeof(_candidates));
-  memset(_iv, 0, sizeof(_iv));
-  memset(_salt, 0, sizeof(_salt));
-  memset(_block, 0, sizeof(_block));
   _streams.Clear();
 }
 
@@ -710,68 +702,54 @@ bool IsSevenZ(const FString &path)
   return FindStartHeader(file, fileSize, start) != (UInt64)(Int64)-1;
 }
 
-bool CProbe::ReadAt(UInt64 offset, void *data, size_t size)
+bool CProbe::ReadAt(UInt64 offset, void *data, size_t size) const
 {
   if (size == 0)
     return true;
   if (offset > _fileSize || size > _fileSize - offset)
     return false;
-  UInt64 newPos;
-  if (!_file.Seek(offset, newPos))
-    return false;
-  Byte *p = (Byte *)data;
-  size_t done = 0;
-  while (done < size)
-  {
-    UInt32 processed = 0;
-    const size_t left = size - done;
-    const size_t todo = (left > ((size_t)1 << 20)) ? ((size_t)1 << 20) : left;
-    if (!_file.ReadPart(p + done, (UInt32)todo, processed))
-      return false;
-    if (processed == 0)
-      return false;
-    done += processed;
-  }
-  return true;
+  _fileCS.Enter();
+  const bool ok = ReadAt_File(_file, _fileSize, offset, data, size);
+  _fileCS.Leave();
+  return ok;
 }
 
-bool CProbe::DeriveKey(const Byte *password16, size_t size, Byte *key) const
+bool CProbe::DeriveKey(const CCheckCtx &ctx, const Byte *password16, size_t size, Byte *key) const
 {
-  /*
-    7-Zip hashes the salt followed by the UTF-16LE password, then replaces the
-    last eight bytes of that buffer with a counter and hashes 2^power such
-    buffers into one single SHA-256.
-  */
   const unsigned kKeySize = 32;
-  if (_numCyclesPower == 0x3F)
+  if (ctx.Power == 0x3F)
   {
-    // Extended mode: the key is the truncated salt/password buffer itself.
     memset(key, 0, kKeySize);
-    const size_t saltPart = (_saltSize < kKeySize) ? _saltSize : kKeySize;
-    memcpy(key, _salt, saltPart);
+    const size_t saltPart = (ctx.SaltSize < kKeySize) ? ctx.SaltSize : kKeySize;
+    if (saltPart != 0)
+      memcpy(key, ctx.Salt, saltPart);
     const size_t rest = kKeySize - saltPart;
     const size_t copy = (size < rest) ? size : rest;
-    memcpy(key + saltPart, password16, copy);
+    if (copy != 0)
+      memcpy(key + saltPart, password16, copy);
     return true;
   }
 
-  CByteBuffer buf;
-  buf.Alloc(_saltSize + size);
-  Byte *p = buf;
-  if (_saltSize != 0)
-    memcpy(p, _salt, _saltSize);
+  Byte stackBuf[256];
+  CByteBuffer heapBuf;
+  Byte *p = stackBuf;
+  const size_t totalSize = ctx.SaltSize + size;
+  if (totalSize > sizeof(stackBuf))
+  {
+    heapBuf.Alloc(totalSize);
+    p = heapBuf;
+  }
+  if (ctx.SaltSize != 0)
+    memcpy(p, ctx.Salt, ctx.SaltSize);
   if (size != 0)
-    memcpy(p + _saltSize, password16, size);
-  return NPwCrypto::Sha256_Kdf7z(p, _saltSize + size, _numCyclesPower, key);
+    memcpy(p + ctx.SaltSize, password16, size);
+  const bool ok = NPwCrypto::Sha256_Kdf7z(p, totalSize, ctx.Power, key);
+  NPwCrypto::SecureZero(p, totalSize);
+  return ok;
 }
 
-/*
-  CBC decryption of an arbitrary block aligned range: the cipher block just
-  before the range serves as the initialisation vector of this range, so a
-  chunk header can be read without touching the rest of the stream.
-*/
-bool CProbe::DecryptRange(const Byte *key, UInt64 packOffset, UInt64 posOffset,
-    Byte *dest, size_t size)
+bool CProbe::DecryptRange(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 posOffset,
+    Byte *dest, size_t size) const
 {
   if (size == 0)
     return true;
@@ -783,7 +761,7 @@ bool CProbe::DecryptRange(const Byte *key, UInt64 packOffset, UInt64 posOffset,
 
   Byte iv[16];
   if (posOffset == 0)
-    memcpy(iv, _iv, 16);
+    memcpy(iv, ctx.Iv, 16);
   else if (!ReadAt(offset - 16, iv, 16))
     return false;
 
@@ -792,17 +770,17 @@ bool CProbe::DecryptRange(const Byte *key, UInt64 packOffset, UInt64 posOffset,
   return NPwCrypto::Aes_Cbc_Decrypt(key, 32, iv, dest, size);
 }
 
-bool CProbe::PlainByte(const Byte *key, UInt64 packOffset, UInt64 pos, unsigned &value)
+bool CProbe::PlainByte(CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 pos, unsigned &value) const
 {
   const UInt64 blockPos = pos & ~(UInt64)15;
-  if (!_blockValid || _blockPos != blockPos)
+  if (!ctx.BlockValid || ctx.BlockPos != blockPos)
   {
-    if (!DecryptRange(key, packOffset, blockPos, _block, 16))
+    if (!DecryptRange(ctx, key, packOffset, blockPos, ctx.Block, 16))
       return false;
-    _blockPos = blockPos;
-    _blockValid = true;
+    ctx.BlockPos = blockPos;
+    ctx.BlockValid = true;
   }
-  value = _block[(unsigned)(pos & 15)];
+  value = ctx.Block[(unsigned)(pos & 15)];
   return true;
 }
 
@@ -837,8 +815,8 @@ bool CProbe::PackRange(unsigned folderIndex, UInt64 &offset, UInt64 &size) const
   return size != 0 && size <= _fileSize - packOffset;
 }
 
-bool CProbe::WalkChunks(const Byte *key, UInt64 packOffset,
-    UInt64 inputSize, UInt64 outputSize)
+bool CProbe::WalkChunks(CCheckCtx &ctx, const Byte *key, UInt64 packOffset,
+    UInt64 inputSize, UInt64 outputSize) const
 {
   UInt64 pos = 0;
   UInt64 produced = 0;
@@ -850,16 +828,15 @@ bool CProbe::WalkChunks(const Byte *key, UInt64 packOffset,
       return false;
 
     unsigned control;
-    if (!PlainByte(key, packOffset, pos, control))
+    if (!PlainByte(ctx, key, packOffset, pos, control))
       return false;
     pos++;
 
     if (control == 0)
     {
-      // The end marker has to sit exactly on the AES output boundary.
       if (pos != inputSize || produced != outputSize)
         return false;
-      return CheckPadding(key, packOffset, inputSize, inputSize);
+      return CheckPadding(ctx, key, packOffset, inputSize, inputSize);
     }
 
     if (control < 0x80)
@@ -870,8 +847,8 @@ bool CProbe::WalkChunks(const Byte *key, UInt64 packOffset,
         return false;
 
       unsigned hi, lo;
-      if (!PlainByte(key, packOffset, pos, hi)
-          || !PlainByte(key, packOffset, pos + 1, lo))
+      if (!PlainByte(ctx, key, packOffset, pos, hi)
+          || !PlainByte(ctx, key, packOffset, pos + 1, lo))
         return false;
       const UInt64 len = (((UInt64)hi << 8) | lo) + 1;
       pos += 2;
@@ -888,7 +865,7 @@ bool CProbe::WalkChunks(const Byte *key, UInt64 packOffset,
 
       unsigned b[4];
       for (unsigned i = 0; i < 4; i++)
-        if (!PlainByte(key, packOffset, pos + i, b[i]))
+        if (!PlainByte(ctx, key, packOffset, pos + i, b[i]))
           return false;
       const UInt64 unpack = (((UInt64)(control & 0x1F) << 16)
           | ((UInt64)b[0] << 8) | b[1]) + 1;
@@ -898,7 +875,7 @@ bool CProbe::WalkChunks(const Byte *key, UInt64 packOffset,
       if ((control & 0x40) != 0)
       {
         unsigned prop;
-        if (!PlainByte(key, packOffset, pos, prop))
+        if (!PlainByte(ctx, key, packOffset, pos, prop))
           return false;
         pos++;
         if (prop >= 9 * 5 * 5)
@@ -919,12 +896,8 @@ bool CProbe::WalkChunks(const Byte *key, UInt64 packOffset,
   return false;
 }
 
-/*
-  The packed stream is padded to the AES block size. With the right password
-  the padding bytes are zero, with a wrong one they are random.
-*/
-bool CProbe::CheckPadding(const Byte *key, UInt64 packOffset,
-    UInt64 inputSize, UInt64 packSize)
+bool CProbe::CheckPadding(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset,
+    UInt64 inputSize, UInt64 packSize) const
 {
   if (inputSize >= packSize)
     return inputSize == packSize;
@@ -934,7 +907,7 @@ bool CProbe::CheckPadding(const Byte *key, UInt64 packOffset,
 
   Byte block[16];
   const UInt64 blockPos = inputSize & ~(UInt64)15;
-  if (!DecryptRange(key, packOffset, blockPos, block, 16))
+  if (!DecryptRange(ctx, key, packOffset, blockPos, block, 16))
     return false;
   for (UInt64 i = inputSize; i < packSize; i++)
     if (block[(unsigned)(i - blockPos)] != 0)
@@ -942,23 +915,17 @@ bool CProbe::CheckPadding(const Byte *key, UInt64 packOffset,
   return true;
 }
 
-/*
-  Decrypts the packed stream and, when a compressor follows the AES coder,
-  decodes the rest of the chain as well.
-*/
-bool CProbe::DecodeChain(const Byte *key, UInt64 packOffset, UInt64 packSize,
-    CByteBuffer &dest, UInt64 &destSize)
+bool CProbe::DecodeChain(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 packSize,
+    CByteBuffer &dest, UInt64 &destSize) const
 {
-  const CFolder &folder = _streams.Folders[_folderIndex];
+  const CFolder &folder = _streams.Folders[ctx.FolderIndex];
   if (folder.NumCoders == 0 || packSize > kMaxProbeData)
     return false;
 
-  // The AES coder stores the real plaintext size; the packed stream is padded
-  // up to the block size, so the last block is decrypted as a whole.
   const UInt64 aesOut = folder.UnpackSizes[0];
   if (aesOut == 0 || aesOut > packSize)
     return false;
-  if (!CheckPadding(key, packOffset, aesOut, packSize))
+  if (!CheckPadding(ctx, key, packOffset, aesOut, packSize))
     return false;
 
   const UInt64 aesFull = (aesOut + 15) & ~(UInt64)15;
@@ -967,7 +934,7 @@ bool CProbe::DecodeChain(const Byte *key, UInt64 packOffset, UInt64 packSize,
 
   CByteBuffer aesBuf;
   aesBuf.Alloc((size_t)aesFull);
-  if (!DecryptRange(key, packOffset, 0, aesBuf, (size_t)aesFull))
+  if (!DecryptRange(ctx, key, packOffset, 0, aesBuf, (size_t)aesFull))
     return false;
 
   if (folder.NumCoders == 1)
@@ -1006,12 +973,11 @@ bool CProbe::DecodeChain(const Byte *key, UInt64 packOffset, UInt64 packSize,
   return true;
 }
 
-// The encrypted next header: decode it and compare the stored CRC.
-bool CProbe::CheckHeader(const Byte *key, UInt64 packOffset, UInt64 packSize)
+bool CProbe::CheckHeader(const CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 packSize) const
 {
   CByteBuffer plain;
   UInt64 plainSize = 0;
-  if (!DecodeChain(key, packOffset, packSize, plain, plainSize))
+  if (!DecodeChain(ctx, key, packOffset, packSize, plain, plainSize))
     return false;
 
   if (plainSize < 2)
@@ -1020,43 +986,39 @@ bool CProbe::CheckHeader(const Byte *key, UInt64 packOffset, UInt64 packSize)
   if (p[0] != kId_Header)
     return false;
   const UInt32 calc = NPwCrypto::Crc32_Calc(plain, (size_t)plainSize);
-  const CFolder &folder = _streams.Folders[_folderIndex];
+  const CFolder &folder = _streams.Folders[ctx.FolderIndex];
   if (folder.CrcDefined)
     return calc == (UInt32)folder.Crc;
-  // Without a stored digest only the shape of the plain text can confirm it.
   return ValidateHeader(plain, (size_t)plainSize);
 }
 
-bool CProbe::CheckPayload(const Byte *key, UInt64 packOffset, UInt64 packSize)
+bool CProbe::CheckPayload(CCheckCtx &ctx, const Byte *key, UInt64 packOffset, UInt64 packSize) const
 {
-  const CFolder &folder = _streams.Folders[_folderIndex];
+  const CFolder &folder = _streams.Folders[ctx.FolderIndex];
 
   const UInt64 aesOut = folder.UnpackSizes[0];
   if (aesOut == 0 || aesOut > packSize)
     return false;
 
-  // A small 1-or-2 coder folder that stores its CRC is verified exactly.
   const UInt64 finalSize = (folder.NumOut != 0 && folder.NumOut <= 4)
       ? folder.UnpackSizes[folder.NumOut - 1] : 0;
   if (folder.NumCoders <= 2 && folder.CrcDefined && finalSize != 0 && finalSize <= kMaxPayloadDecode)
   {
     CByteBuffer plain;
     UInt64 plainSize = 0;
-    if (!DecodeChain(key, packOffset, packSize, plain, plainSize))
+    if (!DecodeChain(ctx, key, packOffset, packSize, plain, plainSize))
       return false;
     return NPwCrypto::Crc32_Calc(plain, (size_t)plainSize) == (UInt32)folder.Crc;
   }
 
-  // Otherwise an LZMA2 chunk chain immediately behind the AES coder (including
-  // 3-coder chains such as AES + LZMA2 + BCJ/Delta) is a strong signal.
   if (folder.NumCoders < 2 || folder.Coders[1].Id != k_Lzma2)
     return false;
   const UInt64 out = folder.UnpackSizes[1];
   if (out == 0)
     return false;
-  if (!WalkChunks(key, packOffset, aesOut, out))
+  if (!WalkChunks(ctx, key, packOffset, aesOut, out))
     return false;
-  return CheckPadding(key, packOffset, aesOut, packSize);
+  return CheckPadding(ctx, key, packOffset, aesOut, packSize);
 }
 
 /*
@@ -1113,24 +1075,22 @@ bool CProbe::SelectFolder()
     if (ivSize != 0)
       memcpy(c.Iv, coder.Props + dataOff + saltSize, ivSize);
   }
-  if (_numCandidates == 0)
-    return false;
-
-  UseCandidate(0);
-  return true;
+  return _numCandidates != 0;
 }
 
-void CProbe::UseCandidate(unsigned index)
+void CProbe::LoadCandidate(unsigned index, CCheckCtx &ctx) const
 {
   const CCandidate &c = _candidates[index];
-  _folderIndex = c.FolderIndex;
-  _saltSize = c.SaltSize;
-  _numCyclesPower = c.Power;
-  memcpy(_iv, c.Iv, 16);
-  memset(_salt, 0, sizeof(_salt));
+  ctx.FolderIndex = c.FolderIndex;
+  ctx.SaltSize = c.SaltSize;
+  ctx.Power = c.Power;
+  memcpy(ctx.Iv, c.Iv, 16);
+  memset(ctx.Salt, 0, sizeof(ctx.Salt));
   if (c.SaltSize != 0)
-    memcpy(_salt, c.Salt, c.SaltSize);
-  _blockValid = false;
+    memcpy(ctx.Salt, c.Salt, c.SaltSize);
+  ctx.BlockPos = 0;
+  ctx.BlockValid = false;
+  memset(ctx.Block, 0, sizeof(ctx.Block));
 }
 
 bool CProbe::Open_Header(const Byte *nextHeader, size_t nextHeaderSize)
@@ -1266,23 +1226,25 @@ bool CProbe::Open(const FString &path)
   return false;
 }
 
-bool CProbe::Check(const Byte *password, size_t size)
+bool CProbe::Check(const Byte *password, size_t size) const
 {
   if (_mode == 0)
     return false;
 
-  /*
-    The chain hands out UTF-8, but 7-Zip derives its key from the UTF-16LE form
-    of the password, so the candidate is converted back here.
-  */
   UString unicode;
   if (!Convert_UTF8_Buf_To_Unicode((const char *)password, size, unicode))
     return false;
 
   const unsigned len = unicode.Len();
-  CByteBuffer pw;
-  pw.Alloc((size_t)len * 2);
-  Byte *p = pw;
+  Byte pwStack[256];
+  CByteBuffer pwHeap;
+  Byte *p = pwStack;
+  const size_t pwBytes = (size_t)len * 2;
+  if (pwBytes > sizeof(pwStack))
+  {
+    pwHeap.Alloc(pwBytes);
+    p = pwHeap;
+  }
   for (unsigned i = 0; i < len; i++)
   {
     const unsigned c = (unsigned)unicode[i];
@@ -1297,50 +1259,44 @@ bool CProbe::Check(const Byte *password, size_t size)
   Byte lastSalt[16];
   memset(lastSalt, 0, sizeof(lastSalt));
 
-  /*
-    A wrong pick among several encrypted folders would reject the right
-    password, so every candidate is tried until one confirms it. Re-derive
-    the key whenever a candidate folder uses a different salt or cycle count.
-  */
   bool result = false;
+  CCheckCtx ctx;
   for (unsigned i = 0; i < _numCandidates && !result; i++)
   {
-    UseCandidate(i);
+    LoadCandidate(i, ctx);
     UInt64 packOffset = 0;
     UInt64 packSize = 0;
-    if (!PackRange(_folderIndex, packOffset, packSize))
+    if (!PackRange(ctx.FolderIndex, packOffset, packSize))
       continue;
 
     const bool sameKdf = haveKey
-        && lastSaltSize == _saltSize
-        && lastPower == _numCyclesPower
-        && (_saltSize == 0 || memcmp(lastSalt, _salt, _saltSize) == 0);
+        && lastSaltSize == ctx.SaltSize
+        && lastPower == ctx.Power
+        && (ctx.SaltSize == 0 || memcmp(lastSalt, ctx.Salt, ctx.SaltSize) == 0);
     if (!sameKdf)
     {
-      if (!DeriveKey(p, (size_t)len * 2, key))
+      if (!DeriveKey(ctx, p, pwBytes, key))
         continue;
       haveKey = true;
-      lastSaltSize = _saltSize;
-      lastPower = _numCyclesPower;
-      if (_saltSize != 0)
-        memcpy(lastSalt, _salt, _saltSize);
+      lastSaltSize = ctx.SaltSize;
+      lastPower = ctx.Power;
+      if (ctx.SaltSize != 0)
+        memcpy(lastSalt, ctx.Salt, ctx.SaltSize);
     }
 
-    _blockValid = false;
+    ctx.BlockValid = false;
     try
     {
       result = (_mode == 1)
-          ? CheckHeader(key, packOffset, packSize)
-          : CheckPayload(key, packOffset, packSize);
+          ? CheckHeader(ctx, key, packOffset, packSize)
+          : CheckPayload(ctx, key, packOffset, packSize);
     }
     catch (...)
     {
       result = false;
     }
   }
-  NPwCrypto::SecureZero(p, (size_t)len * 2);
-  if (!result && _numCandidates != 0)
-    UseCandidate(0);
+  NPwCrypto::SecureZero(p, pwBytes);
   NPwCrypto::SecureZero(key, sizeof(key));
   return result;
 }

@@ -7,6 +7,7 @@
 #include "../../../../Common/MyBuffer.h"
 #include "../../../../Common/MyString.h"
 #include "../../../../Windows/FileIO.h"
+#include "../../../../Windows/Synchronization.h"
 
 /*
   Minimal ZIP reader used to verify a candidate password without opening the
@@ -63,7 +64,8 @@ bool Read_Info(const FString &path, CEntryInfo &info);
 class CZipCryptoProbe
 {
   CEntryInfo _info;
-  NWindows::NFile::NIO::CInFile _file;
+  mutable NWindows::NFile::NIO::CInFile _file;
+  mutable NWindows::NSynchronization::CCriticalSection _fileCS;
   Byte _header[12];
   CByteBuffer _cachedData;
   bool _hasCachedData;
@@ -76,7 +78,7 @@ public:
   CZipCryptoProbe();
   ~CZipCryptoProbe();
   bool Init(const FString &path, const CEntryInfo &info);
-  bool Check(const Byte *password, size_t passwordSize);
+  bool Check(const Byte *password, size_t passwordSize) const;
 };
 
 /*
@@ -87,7 +89,8 @@ public:
 class CWinZipAesProbe
 {
   CEntryInfo _info;
-  NWindows::NFile::NIO::CInFile _file;
+  mutable NWindows::NFile::NIO::CInFile _file;
+  mutable NWindows::NSynchronization::CCriticalSection _fileCS;
   unsigned _saltSize;
   unsigned _keySize;
   Byte _salt[16];
@@ -106,7 +109,7 @@ public:
   CWinZipAesProbe();
   ~CWinZipAesProbe();
   bool Init(const FString &path, const CEntryInfo &info);
-  bool Check(const Byte *password, size_t passwordSize);
+  bool Check(const Byte *password, size_t passwordSize) const;
 };
 
 /*
