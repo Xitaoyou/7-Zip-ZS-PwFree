@@ -607,7 +607,7 @@ void CContextMenuInfo::Load()
   Cascaded.Val = true;
   Cascaded.Def = false;
 
-  MenuIcons.Val = false;
+  MenuIcons.Val = true;
   MenuIcons.Def = false;
 
   ElimDup.Val = true;

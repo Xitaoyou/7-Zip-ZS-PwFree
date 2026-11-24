@@ -30,6 +30,7 @@
 #include "ContextMenu.h"
 #include "ContextMenuFlags.h"
 #include "MyMessages.h"
+#include "../Common/UiLang.h"
 
 #include "resource.h"
 
@@ -760,7 +761,21 @@ Z7_COMWF_B CZipContextMenu::QueryContextMenu(HMENU hMenu, UINT indexMenu,
       {
         CCommandMapItem cmi;
         AddCommand(kOpen, mainString, cmi);
-        MyInsertMenu(popupMenu, subIndex++, currentCommandID++, mainString, bitmap);
+        if (ci.Cascaded.Val && hMenu)
+        {
+          // Pull "Unlock with UnlockZip (Cloud)" out to top-level menu (not collapsed)
+          const UString unlockLabel = NUiLang::Tr(
+              L"Unlock with UnlockZip (Cloud)",
+              L"\x7528 UnlockZip \x4E91\x89E3\x5BC6\x6253\x5F00");
+          _commandMap.Back().UserString = unlockLabel;
+          CMenu topMenu;
+          topMenu.Attach(hMenu);
+          MyInsertMenu(topMenu, indexMenu++, currentCommandID++, unlockLabel, bitmap);
+        }
+        else
+        {
+          MyInsertMenu(popupMenu, subIndex++, currentCommandID++, mainString, bitmap);
+        }
       }
       if ((contextMenuFlags & NContextMenuFlags::kOpenAs) != 0
           // && (!thereIsMainOpenItem || !FindExt(kNoOpenAsExtensions, fi0.Name))
@@ -1073,7 +1088,8 @@ Z7_COMWF_B CZipContextMenu::QueryContextMenu(HMENU hMenu, UINT indexMenu,
           menu.Attach(hMenu);
           // menuDestroyer_CRC.Disable();
         }
-        MyAddSubMenu(_commandMap, kCheckSumCascadedVerb, menu, indexInParent++, currentCommandID++, (UString)"UnlockZip Hash", subMenu,
+        MyAddSubMenu(_commandMap, kCheckSumCascadedVerb, menu, indexInParent++, currentCommandID++,
+            UString(NUiLang::Tr(L"UnlockZip Hash", L"UnlockZip \x6821\x9A8C")), subMenu,
           /* insertHashMenuTo7zipMenu ? NULL : */ bitmap);
         _commandMap.Back().CtxCommandType = CtxCommandType_CrcRoot;
         if (!insertHashMenuTo7zipMenu)
@@ -1660,10 +1676,10 @@ Z7_COMWF_B CZipExplorerCommand::GetTitle(IShellItemArray *psiItemArray, LPWSTR *
   if (IsRoot)
   {
     LoadItems(psiItemArray);
-    name = "7-Zip"; //  "New"
+    name = "UnlockZip";
   }
   else
-    name = "7-Zip item";
+    name = "UnlockZip item";
   
   if (!_commandMap_Cur.IsEmpty())
   {
@@ -1686,9 +1702,7 @@ Z7_COMWF_B CZipExplorerCommand::GetIcon(IShellItemArray * /* psiItemArray */, LP
   *ppszIcon = NULL;
   // return E_NOTIMPL;
   UString imageName = fs2us(NWindows::NDLL::GetModuleDirPrefix());
-  // imageName += "7zG.exe";
-  imageName += "7-zip.dll";
-  // imageName += ",190";
+  imageName += "7zFM.exe,0";
   return My_SHStrDupW(imageName, ppszIcon);
   // COM_TRY_END
 }

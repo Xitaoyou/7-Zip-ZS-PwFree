@@ -1732,9 +1732,12 @@ if (res == SZ_OK)
 
   if (res == SZ_OK)
   {
-    if (!g_SilentMode && needRebootLevel > 1)
+    if (!g_SilentMode && needRebootLevel >= 1)
     {
-      if (MessageBoxW(g_HWND, L"You must restart your system to complete the installation.\nRestart now?",
+      if (MessageBoxW(g_HWND,
+          IsZhCnUi()
+            ? L"\x90E8\x5206\x53F3\x952E\x83DC\x5355\x7EC4\x4EF6 (7-zip.dll) \x6B63\x88AB\x8D44\x6E90\x7BA1\x7406\x5668\x5360\x7528\xFF0C\x9700\x8981\x91CD\x542F\x7535\x8111\x540E\x751F\x6548\x3002\n\x662F\x5426\x7ACB\x5373\x91CD\x542F\xFF1F"
+            : L"You must restart your system to complete the installation.\nRestart now?",
           k_7zip_Setup, MB_YESNO | MB_DEFBUTTON2) == IDYES)
       {
         #ifndef UNDER_CE
