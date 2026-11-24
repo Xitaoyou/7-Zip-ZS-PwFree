@@ -1031,7 +1031,7 @@ void AppendArchiveNameSubfolder(UString &dirPath, const UString &archivePath)
 
   // Extract file name from archivePath
   int slash = archivePath.ReverseFind_PathSepar();
-  UString name = (slash >= 0) ? archivePath.Ptr((unsigned)slash + 1) : archivePath;
+  UString name = (slash >= 0) ? UString(archivePath.Ptr((unsigned)slash + 1)) : archivePath;
   if (name.IsEmpty())
     return;
 
@@ -1056,7 +1056,7 @@ void AppendArchiveNameSubfolder(UString &dirPath, const UString &archivePath)
   // Avoid double-appending if dirPath already ends with this archive folder name
   UString cleanDir = StripTrailingSlash(dirPath);
   int lastSep = cleanDir.ReverseFind_PathSepar();
-  UString lastPart = (lastSep >= 0) ? cleanDir.Ptr((unsigned)lastSep + 1) : cleanDir;
+  UString lastPart = (lastSep >= 0) ? UString(cleanDir.Ptr((unsigned)lastSep + 1)) : cleanDir;
   if (!lastPart.IsEqualTo_NoCase(name))
   {
     EnsureTrailingSlash(cleanDir);
