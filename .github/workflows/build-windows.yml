@@ -215,14 +215,25 @@ jobs:
         & $sevenZip a -tzip -mx9 $portZip "$port\*"
         if ($LASTEXITCODE -ne 0) { exit 1 }
 
+        # 7zipInstall.exe is compiled with -DZ7_NO_METHOD_LZMA2, so the payload MUST use LZMA (not LZMA2).
         $payload = Join-Path $root 'installer-payload.7z'
-        & $sevenZip a -t7z -m0=LZMA2 -mx9 $payload "$inst\*"
+        & $sevenZip a -t7z -m0=LZMA -mf=BCJ2 -mx9 $payload "$inst\*"
         if ($LASTEXITCODE -ne 0) { exit 1 }
 
         $installStub = Join-Path $out 'Install.exe'
         $setupExe = Join-Path $dist '7-Zip-ZS-PwFree-x64-setup.exe'
         cmd /c "copy /b `"$installStub`" + `"$payload`" `"$setupExe`""
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setupExe)) { exit 1 }
+
+        # Verify the generated installer actually unpacks cleanly in silent mode.
+        $testInst = Join-Path $env:RUNNER_TEMP 'pwfree-install-test'
+        if (Test-Path $testInst) { Remove-Item -Recurse -Force $testInst }
+        $proc = Start-Process -FilePath $setupExe -ArgumentList "/S", "/D=$testInst" -Wait -PassThru
+        if ($proc.ExitCode -ne 0 -or -not (Test-Path (Join-Path $testInst '7zFM.exe')) -or -not (Test-Path (Join-Path $testInst '7z.dll'))) {
+          Write-Host ("::error::Installer smoke test failed (exit={0})" -f $proc.ExitCode)
+          exit 1
+        }
+        Write-Host "Installer silent smoke test passed!"
 
         Get-ChildItem $dist | Format-Table Name, Length
 
