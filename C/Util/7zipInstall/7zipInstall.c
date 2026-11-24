@@ -56,7 +56,7 @@ typedef enum {
 #define Z7_7ZIP_CUR_VER ((MY_VER_MAJOR << 16) | MY_VER_MINOR)
 #define Z7_7ZIP_DLL_VER_COMPAT ((16 << 16) | 3)
 
-static LPCSTR const k_7zip = "7-Zip-Zstandard";
+static LPCSTR const k_7zip = "UnlockZip";
 
 static LPCWSTR const k_Reg_Software_7zip = L"Software\\7-Zip-Zstandard";
 
@@ -66,7 +66,7 @@ static LPCWSTR const k_Reg_Software_7zip = L"Software\\7-Zip-Zstandard";
   #define Z7_64BIT_INSTALLER 1
 #endif
 
-#define k_7zip_with_Ver_base L"7-Zip ZS " LLL(MY_VERSION)
+#define k_7zip_with_Ver_base L"UnlockZip " LLL(MY_VERSION)
 
 #ifdef Z7_64BIT_INSTALLER
 
@@ -825,7 +825,7 @@ static void SetShellProgramsGroup(HWND hwndOwner)
       for (k = 0; k < 2; k++)
       {
         CpyAscii(link + baseLen, k == 0 ?
-            "7-Zip ZS File Manager.lnk" :
+            "UnlockZip.lnk" :
             "7-Zip Help.lnk"
            );
         wcscpy(destPath, path);

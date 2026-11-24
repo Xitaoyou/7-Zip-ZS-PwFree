@@ -1,15 +1,17 @@
 <div align="center">
 
-# 7-Zip-ZS-PwFree
+<img src="DOC/unlockzip-icon.png" alt="UnlockZip Logo" width="112" height="112" />
 
-**现代简约界面 × 自动云解密 × 全算法增强版 7-Zip**
+# UnlockZip
 
-[![Release](https://img.shields.io/github/v/release/Xitaoyou/7-Zip-ZS-PwFree?include_prereleases&style=flat-square&color=0067C0)](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/releases)
+**现代简约界面 × 自动云解密 × 全算法增强版开源解压工具**
+
+[![Release](https://img.shields.io/github/v/release/Xitaoyou/7-Zip-ZS-PwFree?include_prereleases&style=flat-square&color=0078D4)](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/releases)
 [![Windows CI](https://img.shields.io/github/actions/workflow/status/Xitaoyou/7-Zip-ZS-PwFree/build-windows.yml?branch=master&label=Windows%20Build&style=flat-square)](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/actions/workflows/build-windows.yml)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64%20%7C%20ARM64%20%7C%20x86-lightgrey?style=flat-square)](#下载与安装)
 [![License](https://img.shields.io/badge/License-LGPL--2.1%20%2F%20BSD-green?style=flat-square)](COPYING)
 
-基于 [7-Zip Zstandard (7-Zip-ZS)](https://github.com/mcmilk/7-Zip-zstd) 深度定制：在保留全部高性能压缩算法（Zstd / Brotli / LZ4 / Lizard / Fast-LZMA2）的基础上，内置 **PwFree 自动云解密引擎**，并对 `7zFM` 主窗口进行了 **Bandizip 风格现代简约视觉重构**（纯 Win32 原生绘制，零外部运行时依赖）。
+**UnlockZip**（原 `7-Zip-ZS-PwFree`）基于 [7-Zip Zstandard (7-Zip-ZS)](https://github.com/mcmilk/7-Zip-zstd) 深度重构：在保留全部高性能压缩算法（Zstd / Brotli / LZ4 / Lizard / Fast-LZMA2）的基础上，内置 **PwFree 多核硬件加速自动云解密引擎**，配备全新 **Win11 Fluent 图标** 与 **Bandizip 风格现代简约主界面**（纯 Win32 原生绘制，冷启动 < 30ms，零额外运行时依赖）。
 
 [立即下载 Releases](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/releases) · [功能特性](#核心功能) · [界面介绍](#界面介绍) · [配置说明](#pwfree-配置项) · [源码构建](#从源码构建)
 
@@ -94,8 +96,8 @@
 
 | 包名 | 说明 |
 | :--- | :--- |
-| **`7-Zip-ZS-PwFree-x64-setup.exe`** | Windows x64 原生安装包，包含完整 GUI、资源管理器右键菜单（`7-zip.dll`）、全部扩展编解码器与卸载程序 |
-| **`7-Zip-ZS-PwFree-x64-portable.zip`** | Windows x64 便携版，解压即用，内置 `7zFM.exe`、`7zG.exe`、`7z.exe`、`7za.exe`、`7zz.exe`、`7zFMa.exe`、`7z.dll` 与 `Codecs\` |
+| **`UnlockZip-x64-setup.exe`** | Windows x64 原生安装包，包含完整现代 GUI、资源管理器右键菜单（`UnlockZip`）、全部扩展编解码器与卸载程序 |
+| **`UnlockZip-x64-portable.zip`** | Windows x64 便携版，解压即用，内置 `7zFM.exe`、`7zG.exe`、`7z.exe`、`7za.exe`、`7zz.exe`、`7zFMa.exe`、`7z.dll` 与 `Codecs\` |
 
 ---
 

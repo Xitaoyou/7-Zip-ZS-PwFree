@@ -140,6 +140,24 @@ void DrawVectorIcon(HDC hdc, EToolbarIcon icon, int cx, int cy, int size, const 
       break;
     }
 
+    case kIconSettings:
+    {
+      // Minimalist gear icon (outer ring + inner hub + 4 cardinal ticks).
+      HGDIOBJ oldBr = ::SelectObject(hdc, ::GetStockObject(NULL_BRUSH));
+      HGDIOBJ oldPen = ::SelectObject(hdc, pen);
+      const int rOut = half - 3;
+      const int rIn = half / 3;
+      ::Ellipse(hdc, cx - rOut, cy - rOut, cx + rOut, cy + rOut);
+      ::Ellipse(hdc, cx - rIn, cy - rIn, cx + rIn, cy + rIn);
+      ::SelectObject(hdc, oldBr);
+      ::SelectObject(hdc, oldPen);
+      DrawLineGdi(hdc, pen, cx, cy - half + 1, cx, cy - rOut);
+      DrawLineGdi(hdc, pen, cx, cy + rOut, cx, cy + half - 1);
+      DrawLineGdi(hdc, pen, cx - half + 1, cy, cx - rOut, cy);
+      DrawLineGdi(hdc, pen, cx + rOut, cy, cx + half - 1, cy);
+      break;
+    }
+
     case kIconInfo:
     default:
     {
@@ -216,13 +234,14 @@ void CModernToolbar::ClearItems()
   _pressedIndex = -1;
 }
 
-void CModernToolbar::AddButton(int commandID, EToolbarIcon icon, const UString &label)
+void CModernToolbar::AddButton(int commandID, EToolbarIcon icon, const UString &label, bool rightAligned)
 {
   CToolbarItem &item = _items.AddNew();
   item.CommandID = commandID;
   item.Icon = icon;
   item.Label = label;
   item.IsSeparator = false;
+  item.RightAligned = rightAligned;
   RecalcLayout();
 }
 
@@ -272,19 +291,27 @@ void CModernToolbar::RecalcLayout()
   const int btnH = (rc.bottom - rc.top > padY * 2) ? (rc.bottom - rc.top - padY * 2) : GetPreferredHeight() - padY * 2;
 
   int x = padX;
+  int rightX = rc.right - padX;
   FOR_VECTOR (i, _items)
   {
     RECT r;
     r.top = padY;
     r.bottom = padY + btnH;
-    r.left = x;
-    if (_items[i].IsSeparator)
+    if (_items[i].RightAligned)
     {
+      r.right = rightX;
+      r.left = rightX - btnW;
+      rightX = r.left - gap;
+    }
+    else if (_items[i].IsSeparator)
+    {
+      r.left = x;
       r.right = x + sepW;
       x = r.right + gap;
     }
     else
     {
+      r.left = x;
       r.right = x + btnW;
       x = r.right + gap;
     }
@@ -361,7 +388,24 @@ void CModernToolbar::OnPaint()
     const int cy = _showLabels
         ? (r.top + (r.bottom - r.top) * 38 / 100)
         : ((r.top + r.bottom) / 2);
-    DrawVectorIcon(memDC, _items[i].Icon, cx, cy, iconSize, pal, btnBg);
+
+    // 2x supersampled icon rendering via HALFTONE StretchBlt for crisp anti-aliased edges.
+    const int box = iconSize + 6;
+    const int box2 = box * 2;
+    HDC ssDC = ::CreateCompatibleDC(memDC);
+    HBITMAP ssBmp = ::CreateCompatibleBitmap(memDC, box2, box2);
+    HGDIOBJ oldSs = ::SelectObject(ssDC, ssBmp);
+    RECT ssRc = { 0, 0, box2, box2 };
+    HBRUSH ssBg = ::CreateSolidBrush(btnBg);
+    ::FillRect(ssDC, &ssRc, ssBg);
+    ::DeleteObject(ssBg);
+    DrawVectorIcon(ssDC, _items[i].Icon, box, box, iconSize * 2, pal, btnBg);
+    ::SetStretchBltMode(memDC, HALFTONE);
+    ::SetBrushOrgEx(memDC, 0, 0, NULL);
+    ::StretchBlt(memDC, cx - box / 2, cy - box / 2, box, box, ssDC, 0, 0, box2, box2, SRCCOPY);
+    ::SelectObject(ssDC, oldSs);
+    ::DeleteObject(ssBmp);
+    ::DeleteDC(ssDC);
   }
 
   ::SelectObject(memDC, oldPen);

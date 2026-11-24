@@ -260,6 +260,7 @@ void CApp::ReloadToolbars()
         _modernToolBar.AddButton(IDM_DELETE,     NModernUI::kIconDelete, LangString(IDS_BUTTON_DELETE));
         _modernToolBar.AddButton(IDM_PROPERTIES, NModernUI::kIconInfo,   LangString(IDS_BUTTON_INFO));
       }
+      _modernToolBar.AddButton(IDM_OPTIONS, NModernUI::kIconSettings, LangString(IDS_OPTIONS), true);
     }
   }
 }
@@ -965,12 +966,18 @@ void CApp::OnNotify(int /* ctrlID */, LPNMHDR pnmh)
 void CApp::RefreshTitle(bool always)
 {
   UString path = GetFocusedPanel()._currentFolderPrefix;
+  UString title;
   if (path.IsEmpty())
-    path = "7-Zip"; // LangString(IDS_APP_TITLE);
-  if (!always && path == PrevTitle)
+    title = L"UnlockZip";
+  else
+  {
+    title = path;
+    title += L" - UnlockZip";
+  }
+  if (!always && title == PrevTitle)
     return;
-  PrevTitle = path;
-  NWindows::MySetWindowText(_window, path);
+  PrevTitle = title;
+  NWindows::MySetWindowText(_window, title);
 }
 
 void CApp::RefreshTitlePanel(unsigned panelIndex, bool always)

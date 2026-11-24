@@ -50,7 +50,7 @@ typedef enum {
   #define Z7_64BIT_INSTALLER 1
 #endif
 
-#define k_7zip_with_Ver_base L"7-Zip ZS " LLL(MY_VERSION)
+#define k_7zip_with_Ver_base L"UnlockZip " LLL(MY_VERSION)
 
 #ifdef Z7_64BIT_INSTALLER
 
@@ -404,7 +404,7 @@ static void SetShellProgramsGroup(HWND hwndOwner)
       for (k = 0; k < 2; k++)
       {
         CpyAscii(link + baseLen, k == 0 ?
-            "7-Zip ZS File Manager.lnk" :
+            "UnlockZip.lnk" :
             "7-Zip Help.lnk");
         wcscpy(destPath, path);
         CatAscii(destPath, k == 0 ?

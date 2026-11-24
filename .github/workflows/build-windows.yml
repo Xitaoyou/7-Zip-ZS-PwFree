@@ -211,7 +211,7 @@ jobs:
         }
 
         $sevenZip = Join-Path $out '7z.exe'
-        $portZip = Join-Path $dist '7-Zip-ZS-PwFree-x64-portable.zip'
+        $portZip = Join-Path $dist 'UnlockZip-x64-portable.zip'
         & $sevenZip a -tzip -mx9 $portZip "$port\*"
         if ($LASTEXITCODE -ne 0) { exit 1 }
 
@@ -221,7 +221,7 @@ jobs:
         if ($LASTEXITCODE -ne 0) { exit 1 }
 
         $installStub = Join-Path $out 'Install.exe'
-        $setupExe = Join-Path $dist '7-Zip-ZS-PwFree-x64-setup.exe'
+        $setupExe = Join-Path $dist 'UnlockZip-x64-setup.exe'
         cmd /c "copy /b `"$installStub`" + `"$payload`" `"$setupExe`""
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $setupExe)) { exit 1 }
 
@@ -241,7 +241,7 @@ jobs:
       if: success() && matrix.platform == 'x64'
       uses: actions/upload-artifact@v4
       with:
-        name: 7-Zip-ZS-PwFree-x64-packages
+        name: UnlockZip-x64-packages
         path: dist/*
         if-no-files-found: error
 
@@ -253,16 +253,17 @@ jobs:
       run: |
         $tag = $env:GITHUB_REF_NAME
         $notes = @"
-        ## 7-Zip-ZS-PwFree $tag
+        ## UnlockZip $tag
 
         ### Highlights
-        - **PwFree 自动云解密升级**：修复 HTTP/7z/ZIP/JSON 缺陷，新增动态字典分片发现与 ETag/304 条件刷新
-        - **极致性能**：复用 7-Zip 原生 SHA-NI / ARMv8 硬件汇编 + WinZip AES `BCryptDeriveKeyPBKDF2` + 多线程候选校验工作池
-        - **现代简约主窗口**：Bandizip 风格扁平矢量工具栏、面包屑地址栏、PerMonitorV2 高 DPI、浅/深色主题自动适配与扁平状态栏
+        - **全新品牌与图标**：正式更名为 **UnlockZip**，配备全新 Win11 Fluent 风格透明多尺寸应用图标、统一窗口标题、安装包/卸载器与右键菜单
+        - **修复安装包解压报错**：修正安装器载荷为 `-m0=LZMA -mf=BCJ2` 并加入 CI 静默安装烟测，确保双击开箱即装
+        - **现代简约主窗口**：Bandizip 风格 2x 超采样抗锯齿矢量工具栏（含右侧快捷设置键）、面包屑地址栏、PerMonitorV2 高 DPI、浅/深色实时跟随与 PwFree 胶囊状态栏
+        - **PwFree 极致云解密**：复用 7-Zip 原生 SHA-NI / ARMv8 硬件汇编 + WinZip AES CNG PBKDF2 + 多线程校验池 + 动态字典发现与 ETag/304 刷新
 
         ### 下载说明
-        - `7-Zip-ZS-PwFree-x64-setup.exe`：Windows x64 原生安装包（含右键菜单与卸载程序）
-        - `7-Zip-ZS-PwFree-x64-portable.zip`：Windows x64 便携版（解压即用）
+        - `UnlockZip-x64-setup.exe`：Windows x64 原生安装包（含右键菜单与卸载程序）
+        - `UnlockZip-x64-portable.zip`：Windows x64 便携版（解压即用）
         "@
         $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
         Set-Content -Path $notesFile -Value $notes -Encoding UTF8
@@ -270,10 +271,10 @@ jobs:
         gh release view $tag > $null 2>&1
         if ($LASTEXITCODE -eq 0) { $exists = $true }
         if ($exists) {
-          gh release upload $tag dist/7-Zip-ZS-PwFree-x64-setup.exe dist/7-Zip-ZS-PwFree-x64-portable.zip --clobber
-          gh release edit $tag --title "7-Zip-ZS-PwFree $tag" --notes-file $notesFile
+          gh release upload $tag dist/UnlockZip-x64-setup.exe dist/UnlockZip-x64-portable.zip --clobber
+          gh release edit $tag --title "UnlockZip $tag" --notes-file $notesFile
         } else {
-          gh release create $tag dist/7-Zip-ZS-PwFree-x64-setup.exe dist/7-Zip-ZS-PwFree-x64-portable.zip --title "7-Zip-ZS-PwFree $tag" --notes-file $notesFile
+          gh release create $tag dist/UnlockZip-x64-setup.exe dist/UnlockZip-x64-portable.zip --title "UnlockZip $tag" --notes-file $notesFile
         }
 
     - name: Upload artifacts

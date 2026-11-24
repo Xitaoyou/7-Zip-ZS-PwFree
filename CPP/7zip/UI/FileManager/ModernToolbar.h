@@ -17,7 +17,8 @@ enum EToolbarIcon
   kIconCopy,
   kIconMove,
   kIconDelete,
-  kIconInfo
+  kIconInfo,
+  kIconSettings
 };
 
 struct CToolbarItem
@@ -26,8 +27,9 @@ struct CToolbarItem
   EToolbarIcon Icon;
   UString Label;
   bool IsSeparator;
+  bool RightAligned;
 
-  CToolbarItem(): CommandID(0), Icon(kIconAdd), IsSeparator(false) {}
+  CToolbarItem(): CommandID(0), Icon(kIconAdd), IsSeparator(false), RightAligned(false) {}
 };
 
 class CModernToolbar
@@ -59,7 +61,7 @@ public:
   bool Create(HWND hParent, bool showLabels, bool largeIcons);
   void Destroy();
   void ClearItems();
-  void AddButton(int commandID, EToolbarIcon icon, const UString &label);
+  void AddButton(int commandID, EToolbarIcon icon, const UString &label, bool rightAligned = false);
   void AddSeparator();
   int GetPreferredHeight() const;
   void Move(int x, int y, int width, int height);
