@@ -53,11 +53,13 @@ UI_COMMON_OBJS = \
   $O\ExtractingFilePath.obj \
   $O\HashCalc.obj \
   $O\LoadCodecs.obj \
+  $O\ModernExtractDialog.obj \
   $O\OpenArchive.obj \
   $O\PropIDUtils.obj \
   $O\SetProperties.obj \
   $O\SortUtils.obj \
   $O\TempFiles.obj \
+  $O\UiLang.obj \
   $O\Update.obj \
   $O\UpdateAction.obj \
   $O\UpdateCallback.obj \
