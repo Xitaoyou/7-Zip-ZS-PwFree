@@ -4,7 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches: [ master ]
+    tags: [ 'v*' ]
   pull_request:
+
+permissions:
+  contents: write
 
 concurrency:
   group: windows-${{ github.ref }}
@@ -229,6 +233,37 @@ jobs:
         name: 7-Zip-ZS-PwFree-x64-packages
         path: dist/*
         if-no-files-found: error
+
+    - name: Publish GitHub Release (on tag push)
+      if: success() && matrix.platform == 'x64' && startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: pwsh
+      run: |
+        $tag = $env:GITHUB_REF_NAME
+        $notes = @"
+        ## 7-Zip-ZS-PwFree $tag
+
+        ### Highlights
+        - **PwFree 自动云解密升级**：修复 HTTP/7z/ZIP/JSON 缺陷，新增动态字典分片发现与 ETag/304 条件刷新
+        - **极致性能**：复用 7-Zip 原生 SHA-NI / ARMv8 硬件汇编 + WinZip AES `BCryptDeriveKeyPBKDF2` + 多线程候选校验工作池
+        - **现代简约主窗口**：Bandizip 风格扁平矢量工具栏、面包屑地址栏、PerMonitorV2 高 DPI、浅/深色主题自动适配与扁平状态栏
+
+        ### 下载说明
+        - `7-Zip-ZS-PwFree-x64-setup.exe`：Windows x64 原生安装包（含右键菜单与卸载程序）
+        - `7-Zip-ZS-PwFree-x64-portable.zip`：Windows x64 便携版（解压即用）
+        "@
+        $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+        Set-Content -Path $notesFile -Value $notes -Encoding UTF8
+        $exists = $false
+        gh release view $tag > $null 2>&1
+        if ($LASTEXITCODE -eq 0) { $exists = $true }
+        if ($exists) {
+          gh release upload $tag dist/7-Zip-ZS-PwFree-x64-setup.exe dist/7-Zip-ZS-PwFree-x64-portable.zip --clobber
+          gh release edit $tag --title "7-Zip-ZS-PwFree $tag" --notes-file $notesFile
+        } else {
+          gh release create $tag dist/7-Zip-ZS-PwFree-x64-setup.exe dist/7-Zip-ZS-PwFree-x64-portable.zip --title "7-Zip-ZS-PwFree $tag" --notes-file $notesFile
+        }
 
     - name: Upload artifacts
       if: success()
