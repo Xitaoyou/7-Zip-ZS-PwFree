@@ -1,423 +1,143 @@
+<div align="center">
 
-# README
+# 7-Zip-ZS-PwFree
 
-This is the Github Page of [7-Zip] ZS with support of additional Codecs. The library used therefore is located here: [Multithreading Library](https://github.com/mcmilk/zstdmt)
+**现代简约界面 × 自动云解密 × 全算法增强版 7-Zip**
 
-You can install it in two ways:
-1. complete setup with additions within the GUI and a modified Explorer context menu
-2. only the codec plugin that goes to your existing [7-Zip] installation (no GUI changes and no additional Hashers)
+[![Release](https://img.shields.io/github/v/release/Xitaoyou/7-Zip-ZS-PwFree?include_prereleases&style=flat-square&color=0067C0)](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/releases)
+[![Windows CI](https://img.shields.io/github/actions/workflow/status/Xitaoyou/7-Zip-ZS-PwFree/build-windows.yml?branch=master&label=Windows%20Build&style=flat-square)](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/actions/workflows/build-windows.yml)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20x64%20%7C%20ARM64%20%7C%20x86-lightgrey?style=flat-square)](#下载与安装)
+[![License](https://img.shields.io/badge/License-LGPL--2.1%20%2F%20BSD-green?style=flat-square)](COPYING)
 
-# Status
+基于 [7-Zip Zstandard (7-Zip-ZS)](https://github.com/mcmilk/7-Zip-zstd) 深度定制：在保留全部高性能压缩算法（Zstd / Brotli / LZ4 / Lizard / Fast-LZMA2）的基础上，内置 **PwFree 自动云解密引擎**，并对 `7zFM` 主窗口进行了 **Bandizip 风格现代简约视觉重构**（纯 Win32 原生绘制，零外部运行时依赖）。
 
-[![Latest stable release](https://img.shields.io/github/release/mcmilk/7-Zip-zstd.svg)](https://github.com/mcmilk/7-Zip-zstd/releases)
-[![PayPal.me](https://img.shields.io/badge/PayPal-me-blue.svg?maxAge=2592000)](https://www.paypal.me/TinoReichardt)
+[立即下载 Releases](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/releases) · [功能特性](#核心功能) · [界面介绍](#界面介绍) · [配置说明](#pwfree-配置项) · [源码构建](#从源码构建)
 
-## Codec overview
-1. [Zstandard] v1.5.7 is a real-time compression algorithm, providing high compression ratios. It offers a very wide range of compression / speed trade-off, while being backed by a very fast decoder.
-   - Levels: 1..22
+</div>
 
-2. [Brotli] v.1.2.1 is a generic-purpose lossless compression algorithm that compresses data using a combination of a modern variant of the LZ77 algorithm, Huffman coding and 2nd order context modeling, with a compression ratio comparable to the best currently available general-purpose compression methods. It is similar in speed with deflate but offers more dense compression.
-   - Levels: 0..11
+---
 
-3. [LZ4] v1.11.1 is lossless compression algorithm, providing compression speed at 400 MB/s per core (0.16 Bytes/cycle). It features an extremely fast decoder, with speed in multiple GB/s per core (0.71 Bytes/cycle). A high compression derivative, called LZ4_HC, is available, trading customizable CPU time for compression ratio.
-   - Levels: 1..12
+## 核心功能
 
-4. [LZ5] v1.5 is a modification of LZ4 which was meant for a better ratio at cost of slower compression and decompression. It's superseded by [Lizard] now.
-   - Levels: 1..15
+### 1. PwFree 自动云解密与高速恢复引擎
 
-5. [Lizard] v2.1 is an efficient compressor with fast decompression. It achieves compression ratio that is comparable to zip/zlib and zstd/brotli (at low and medium compression levels) at decompression speed of 1000 MB/s and faster.
-   - Levels 10..19 (fastLZ4) are designed to give about 10% better decompression speed than LZ4
-   - Levels 20..29 (LIZv1) are designed to give better ratio than LZ4 keeping 75% decompression speed
-   - Levels 30..39 (fastLZ4 + Huffman) adds Huffman coding to fastLZ4
-   - Levels 40..49 (LIZv1 + Huffman) give the best ratio, comparable to zlib and low levels of zstd/brotli, but with a faster decompression speed
+当你双击打开或解压受密码保护的压缩包时，PwFree 会在弹出密码输入框之前**无感介入**，按优先级尝试自动恢复密码；若未命中或无网络，则立即无缝回退至 7-Zip 原生密码弹窗，绝不阻塞正常使用。
 
-6. [Fast LZMA2] v1.0.1 is a LZMA2 compression algorithm, 20% to 100% faster than normal LZMA2 at levels 5 and above, but with a slightly lower compression ratio. It uses a parallel buffered radix matchfinder and some optimizations from Zstandard. The codec uses much less additional memory per thread than standard LZMA2.
-   - Levels: 1..9
-   
-### Encryption overview
-1. [7zAES] is the default encryption method of 7-Zip, using AES-256 in CBC mode with SHA-256 based key derivation.
-   - Key derivation: SHA-256 iterative hashing
-   - Authentication: none
+- **多级恢复链（按耗时由低到高）**
+  1. `seed` — 复用命令行或同会话中已提供的已知密码
+  2. `cache` — 进程内按文件体积/修改时间/路径特征缓存的已恢复密码
+  3. `cloud` — **云端 MD5 实时查询**：仅上传压缩包 MD5 指纹，不上传任何文件内容，实时同步云端密码库
+  4. `dict` — **在线字典实时拉取 + 动态发现**：纯内存解密不落盘，支持 `ETag` / `Last-Modified`（HTTP 304 条件刷新）以及 `data8.dt`+ 新分片自动发现
+  5. `mask` — 可选的纯数字掩码搜索（4~8 位，默认关闭，可按需配置时间预算）
+- **零信任本地校验**：所有来自云端或字典的候选密码都会在本地通过真实密码学完整性校验后才被采纳，杜绝误报或恶意响应：
+  - **ZIP (ZipCrypto)**：12 字节加密头初筛 + 最小条目完整解压 CRC-32 校验
+  - **ZIP (WinZip AES-128/192/256)**：PBKDF2-HMAC-SHA1 2 字节校验值 + 流式 10 字节 HMAC-SHA1 验证（无文件大小上限）
+  - **7z（加密文件头 `-mhe=on` & 加密数据载荷）**：支持短 IV、多文件夹独立 KDF、非固实多文件档案及 AES + LZMA2 + BCJ/Delta 过滤链
+  - **SFX 自解压包**：自动探测并兼容 ZIP / 7z 自解压 Stub 偏移
+- **硬件加速 + 多核并发**
+  - **7-Zip 原生 SHA-NI / ARMv8 汇编**：7z KDF 直接复用 7-Zip 硬件加速 SHA-256（`Sha256Opt.asm` / `Sha256Opt.c`），常规密码零堆分配
+  - **Windows CNG 原生 PBKDF2**：WinZip AES 直接调用 `BCryptDeriveKeyPBKDF2` 并全局复用算法句柄
+  - **多线程候选校验池**：对 7z / WinZip AES 的字典与掩码阶段自动启用多核并行（最高 16 线程），命中或取消瞬间原子中断
+- **全目标覆盖**：`7zFM.exe`（图形文件管理器）、`7zG.exe`（右键解压/压缩弹窗）以及 `7z.exe` / `7za.exe` / `7zz.exe` / `7zr.exe`（命令行）全部生效。
 
-2. [XChaCha20] is an extended-nonce variant of the ChaCha20 stream cipher, designed by Daniel J. Bernstein. It provides high-speed encryption with a 256-bit key and 192-bit nonce, offering better security margins than the original ChaCha20.
-   - Key derivation: SHA-256 iterative hashing
-   - Authentication: none
+---
 
-3. [XChaCha20-Poly1305] combines the XChaCha20 stream cipher with the Poly1305 message authentication code, providing both encryption and authenticated encryption (AEAD). This ensures data integrity and authenticity in addition to confidentiality.
-   - Key derivation: SHA-256 iterative hashing
-   - Authentication: Poly1305 MAC
+### 2. 界面介绍（Bandizip 风格现代简约主窗口）
 
-4. [AES+XChaCha20-Poly1305] (AXP) is a cascade cipher that applies AES-256-CTR and XChaCha20 sequentially, with Poly1305 providing authentication.
-   - Key derivation: PBKDF2-HMAC-SHA512 + HKDF-BLAKE2sp
-   - Authentication: Poly1305 MAC
+针对原版 7-Zip 界面年代感强、高分屏模糊、位图工具栏锯齿明显等问题，我们在**不引入 Electron / WebView2 / WinUI3 / GDI+ 等任何额外运行时依赖**的前提下，使用纯 Win32 GDI + DWM 对 `7zFM.exe` 主窗口进行了全面重构：
 
-5. [AES+XChaCha20+Ascon] (AXA) is a cascade cipher that applies AES-256-CTR and XChaCha20 sequentially, with Ascon-128a providing authentication. Ascon is the winner of the NIST Lightweight Cryptography standardization project.
-   - Key derivation: PBKDF2-HMAC-SHA512 + HKDF-BLAKE2sp
-   - Authentication: Ascon-128a tag
-
-6. [XChaCha20+AES+AEGIS] (XAA) is a cascade cipher that applies XChaCha20, AES-256-CTR and AEGIS-256 sequentially, with AEGIS-256 providing authentication. AEGIS-256 is specified in RFC 10032 and is built from the AES round function.
-   - Key derivation: PBKDF2-HMAC-SHA512 + HKDF-BLAKE2sp
-   - Authentication: AEGIS-256 tag (256-bit)
-
-### 7-Zip ZS CLI variants
-
-7z and 7zz provide largely the same core 7‑Zip functionality, but they are built/distributed
-differently (plugin-capable vs. standalone), which can affect available formats/codecs.
-
-| Binary | Description |
-|--------|-------------|
-| `7z`   | Full 7‑Zip command-line tool which loads it's modules/codecs via 7z.so. |
-| `7zz`  | Official standalone 7‑Zip binary used on Linux/macOS packages - no external plugins via 7z.so. |
-| `7za`  | Standalone executable which supports fewer archive formats than `7z`. (Minimal + LZ4 and Hashes) |
-| `7zr`  | Minimal "light" standalone executable focused on the 7z format. (FLZMA2, Zstd) |
-
-## 7-Zip Zstandard Edition (full setup, with GUI and Explorer integration)
-
-### Installation (via setup)
-1. download the setup from here [7-Zip ZS Releases](https://github.com/mcmilk/7-Zip-zstd/releases)
-2. install it, like the default [7-Zip] one
-4. you may check, if the [7-Zip] can deal with [Zstandard] or other codecs via this command: `7z.exe i`
-
-The output should look like this:
-```
-7-Zip 26.06 ZS v1.5.7 R1 : Copyright (c) 1999- Igor Pavlov, 2016- Tino Reichardt, 2022- Sergey G. Brester : 2026-11-07
-
-Libs:
- 0  c:\Program Files\7-Zip-Zstandard\7z.dll
- 1  C:\Program Files\7-Zip-Zstandard\Codecs\Iso7z.64.dll
- 
-Formats:
-...
- 0 CK            xz       xz txz (.tar) FD 7 z X Z 00
- 0               Z        z taz (.tar)  1F 9D
- 0 CK            zstd     zst zstd tzst (.tar) tzstd (.tar) 0 x F D 2 F B 5 2 5 . . 0 x F D 2 F B 5 2 8 00
- 0 C   F         7z       7z            7 z BC AF ' 1C
- 0     F         Cab      cab           M S C F 00 00 00 00
-...
-
-Codecs:
- 0 4ED   303011B BCJ2
- 0  EDF  3030103 BCJ
- 0  EDF  3030205 PPC
- 0  EDF  3030401 IA64
- 0  EDF  3030501 ARM
- 0  EDF  3030701 ARMT
- 0  EDF  3030805 SPARC
- 0  EDF    20302 Swap2
- 0  EDF    20304 Swap4
- 0  ED     40202 BZip2
- 0  ED         0 Copy
- 0  ED     40109 Deflate64
- 0  ED     40108 Deflate
- 0  EDF        3 Delta
- 0  ED        21 LZMA2
- 0  ED     30101 LZMA
- 0  ED     30401 PPMD
- 0   D     40301 Rar1
- 0   D     40302 Rar2
- 0   D     40303 Rar3
- 0   D     40305 Rar5
- 0  ED   4F71102 BROTLI
- 0  ED   4F71104 LZ4
- 0  ED   4F71106 LIZARD
- 0  ED   4F71105 LZ5
- 0  ED   4F71101 ZSTD
- 0  ED        21 FLZMA2
- 0  EDF  6F10701 7zAES
- 0  EDF  6F00181 AES256CBC
- 0  EDF  6F10702 XChaCha20
- 0  EDF  6F10703 XChaCha20-Poly1305
- 0  EDF  6F10704 AES256CTR+XChaCha20-Poly1305
- 0  EDF  6F10705 AES256CTR+XChaCha20+Ascon
- 0  EDF  6F10706 XChaCha20+AES+AEGIS
-
-Hashers:
- 0   32      202 BLAKE2sp
- 0   32      204 BLAKE3
- 0    4        1 CRC32
- 0    8        4 CRC64
- 0   16      205 MD2
- 0   16      206 MD4
- 0   16      207 MD5
- 0   20      201 SHA1
- 0   32        A SHA256
- 0   48      208 SHA384
- 0   64      209 SHA512
- 0   32      20A SHA3-256
- 0   48      20B SHA3-384
- 0   64      20C SHA3-512
- 0    4      20D XXH32
- 0    8      20E XXH64
+```text
+┌──────────────────────────────────────────────────────────────────────────┐
+│ [图标] archive.7z - 7-Zip ZS                              [─] [□] [×]   │  ← Win11 圆角 & 深/浅色标题栏
+├──────────────────────────────────────────────────────────────────────────┤
+│ 文件  编辑  查看  收藏  工具  帮助                                       │
+├──────────────────────────────────────────────────────────────────────────┤
+│  ┌──────┐ ┌──────┐ ┌──────┐  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐      │
+│  │  [+] │ │  [↑] │ │  [✓] │  │  │ [❐]  │ │ [→]  │ │ [🗑] │ │ [i]  │      │  ← 扁平矢量工具栏 (62dip)
+│  │ 添加 │ │ 解压 │ │ 测试 │  │  │ 复制 │ │ 移动 │ │ 删除 │ │ 信息 │      │     圆角悬停底色 + 语义色图标
+├──┴──────┴─┴──────┴─┴──────┴──┴──┴──────┴─┴──────┴─┴──────┴─┴──────┴──────┤
+│ [↑]  │  D:  ›  Downloads  ›  archive.7z  ›  src                          │  ← 面包屑地址栏 (36dip)
+├──────────────────────────────────────────────────────────────────────────┤
+│  名称                         │ 大小      │ 压缩后    │ 修改日期         │  ← 扁平自绘表头 (30dip, 无3D边)
+├───────────────────────────────┼───────────┼───────────┼──────────────────┤
+│  📁  docs                     │           │           │ 2026/11/24 10:20 │  ← 现代双缓冲文件列表
+│  📄  README.md                │  12.4 KB  │   4.2 KB  │ 2026/11/24 10:35 │     去除 3D 凹边, ClearType 字体
+│  🔒  secret.bin               │ 128.0 KB  │ 128.0 KB  │ 2026/11/24 10:40 │     柔和选中与清晰层级
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 共 12 项  ·  已选 1 项 (12.4 KB)          [ PwFree: password database ]  │  ← 扁平状态栏 + PwFree 胶囊徽标
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### My Antivirus X.Y or Virustotal.com say it's malware/virus
+#### 视觉与交互细节
+| 模块 | 改造内容 |
+| :--- | :--- |
+| **高 DPI 与窗口框架** | 升级 Manifest 为 **`PerMonitorV2`**，完整响应 `WM_DPICHANGED`，在 100%~250% 缩放及多屏拖拽下始终锐利清晰；Windows 11 自动启用圆角窗口与深/浅色标题栏（旧版 Windows 优雅降级）。 |
+| **扁平矢量工具栏** | 彻底替换旧版洋红掩码 BMP 图标，改为双缓冲纯 GDI 矢量绘制（添加/解压/测试/删除等带柔和语义色强调），支持圆角悬停高亮、按下反馈与大小图标/文字标签切换。 |
+| **面包屑地址栏** | 替代经典 XP 风格 Rebar 下拉框：路径按层级拆分为可点击胶囊，压缩包节点以强调色高亮；点击右侧空白处或按快捷键可无缝切换为路径编辑框，点击列表或回车自动恢复面包屑态。 |
+| **现代文件列表** | 移除经典 `WS_EX_CLIENTEDGE` 3D 凹陷边框，开启 `LVS_EX_DOUBLEBUFFER` 消除滚动闪烁，统一 `Segoe UI` 缓存字体池，表头重绘为 30dip 扁平风格与柔和 1px 分割线。 |
+| **扁平状态栏与主题联动** | 重绘为 26dip 单层扁平状态栏，自动识别 `PwFree:` 解密来源并在右侧渲染圆角胶囊徽标；监听 `WM_SETTINGCHANGE` / `WM_THEMECHANGED`，切换系统浅色/深色模式时实时同步刷新。 |
 
-In summaray: *It's not maleware* - but it's not my job to chase after these (snake oil manufacturers)[https://en.wikipedia.org/wiki/Snake_oil].
+---
 
-In detail: you can verify for yourself that the release downloads are generated on the fly by GitHub Actions
-on this Microsoft-owned platform. If there really were any viruses, they would be generated by machines
-running in Microsoft data centers 😉
+### 3. 完整继承 7-Zip-ZS 全套现代压缩与加密算法
 
-For example, for the released version `v25.01-v1.5.7-R4`:
-- it's the one with tag `v25.01-v1.5.7-R4`
-- click on [Adjust Blake3 MAX_SIMD_DEGREE](https://github.com/mcmilk/7-Zip-zstd/actions/runs/20877497651)
-- scroll down to the Artifacts section
-- all the windows binaries are within this ZIP file: `7-Zip ZS Release binaries.zip`
-- check if the SHA256 hashsums are the same as the files of the release
+- **扩展压缩算法**：[Zstandard](https://facebook.github.io/zstd/) v1.5.7（1..22）、[Brotli](https://github.com/google/brotli) v1.2.1（0..11）、[LZ4](https://github.com/lz4/lz4) v1.11.1（1..12）、[LZ5](https://github.com/inikep/lz5) v1.5（1..15）、[Lizard](https://github.com/inikep/lizard) v2.1（10..49）、[Fast LZMA2](https://github.com/conor42/fast-lzma2) v1.0.1（1..9）
+- **扩展加密算法**：7zAES、XChaCha20、XChaCha20-Poly1305、AES+XChaCha20-Poly1305 (AXP)、AES+XChaCha20+Ascon (AXA)、XChaCha20+AES+AEGIS (XAA)
+- **扩展校验算法**：CRC32/64、MD2/4/5、SHA1/SHA2/SHA3、XXH32/64/XXH3、BLAKE2sp、BLAKE3
 
-I started a list of false positive issues [with issue #451](https://github.com/mcmilk/7-Zip-zstd/issues/451#issuecomment-3733009809).
-Please don’t open a new issue. Instead, contact the antivirus vendor and ask them to remove this [false positive](https://en.wikipedia.org/wiki/False_positives_and_false_negatives).
+---
 
-### Usage and features of the full installation
+## 下载与安装
 
-- compression and decompression for [Brotli], [Lizard], [LZ4], [LZ5] and [Zstandard] within the [7-Zip] container format
-- compression and decompression of [Brotli] (`.br`), [Lizard] (`.liz`), [LZ4] (`.lz4`), [LZ5] (`.lz5`) and [Zstandard] (`.zst`) files
-- handling of ZIP files with [Zstandard] compression
-- included [lzip] decompression support, patch from: https://download.savannah.gnu.org/releases/lzip/7zip/
-- explorer context menu: _"Add to xy.7z"_ will use all parameters of the last "Add to Archive" compression dialog (this includes: method, level, dictionary, blocksize, threads and paramters input box)
-- squashfs files with LZ4 or Zstandard compression can be handled
-- several history settings aren't stored by default, look [here](https://sourceforge.net/p/sevenzip/discussion/45797/thread/dc2ac53d/?limit=25) for some info about that, you can restore original 7-Zip behavior via `tools->options->settings`
-- these hashes can be calculated: CRC32, CRC64, MD2, MD4, MD5, SHA1, SHA256, SHA384, SHA512, SHA3-256, SHA3-384, SHA3-512, XXH32, XXH64, BLAKE2sp, BLAKE3 (lowercase or uppercase)
-- Support for encryption with header encryption (`-mhe=on`), as well as multiple newly added encryption modes: XChaCha20, XChaCha20-Poly1305, AES+XChaCha20-Poly1305, AES+XChaCha20+Ascon, and XChaCha20+AES+AEGIS.
+前往 [**Releases 页面**](https://github.com/Xitaoyou/7-Zip-ZS-PwFree/releases) 获取最新预编译版本：
 
-```bash
-7z a archiv.7z -m0=zstd -mx0   Zstandard Fastest Mode, without BCJ preprocessor
-7z a archiv.7z -m0=zstd -mx1   Zstandard Fast mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=zstd -mx..  ...
-7z a archiv.7z -m0=zstd -mx21  Zstandard 2nd Slowest Mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=zstd -mx22  Zstandard Ultra Mode, with BCJ preprocessor on executables
+| 包名 | 说明 |
+| :--- | :--- |
+| **`7-Zip-ZS-PwFree-x64-setup.exe`** | Windows x64 原生安装包，包含完整 GUI、资源管理器右键菜单（`7-zip.dll`）、全部扩展编解码器与卸载程序 |
+| **`7-Zip-ZS-PwFree-x64-portable.zip`** | Windows x64 便携版，解压即用，内置 `7zFM.exe`、`7zG.exe`、`7z.exe`、`7za.exe`、`7zz.exe`、`7zFMa.exe`、`7z.dll` 与 `Codecs\` |
 
-7z a archiv.7z -m0=lz4 -mx0   LZ4 Fastest Mode, without BCJ preprocessor
-7z a archiv.7z -m0=lz4 -mx1   LZ4 Fast mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=lz4 -mx..  ...
-7z a archiv.7z -m0=lz4 -mx12  LZ4 Ultra Mode, with BCJ preprocessor on executables
+---
 
-7z a archiv.7z -m0=lz5 -mx0   LZ5 Version 1.5 Fastest Mode, without BCJ preprocessor
-7z a archiv.7z -m0=lz5 -mx1   LZ5 Version 1.5 Fast mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=lz5 -mx..  ...
-7z a archiv.7z -m0=lz5 -mx16  LZ5 Version 1.5 Ultra Mode, with BCJ preprocessor on executables
+## PwFree 配置项
 
-7z a archiv.7z -m0=flzma2 -mx1   Fast LZMA2 Fastest mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=flzma2 -mx..  ...
-7z a archiv.7z -m0=flzma2 -mx9   Fast LZMA2 Ultra Mode, with BCJ preprocessor on executables
+可在 `7zFM` 菜单栏 **`工具 -> 选项 -> 设置`** 页面直接开关核心选项，所有参数持久化在注册表 `HKCU\Software\7-Zip-Zstandard\PwFree`：
 
-7z x -so test.tar.zst | 7z l -si -ttar
--> show contents of zstd compressed tar archive test.tar.zst
+| 注册表项 | 默认值 | 说明 |
+| :--- | :---: | :--- |
+| `Enabled` | `1` | PwFree 自动解密总开关 |
+| `UseCloud` | `1` | 允许云端 MD5 实时密码查询 |
+| `UseLocalDict` | `1` | 允许在线字典拉取与匹配（纯内存，带 ETag/304 刷新与新分片发现） |
+| `ShowSource` | `1` | 解密成功后在状态栏/控制台显示密码来源 |
+| `AllowHttpFallback` | `0` | HTTPS 失败时是否允许回退明文 HTTP（默认关闭以确保安全） |
+| `CloudBudgetMs` | `3000` | 云端查询超时预算（毫秒） |
+| `DictBudgetMs` | `120000` | 字典匹配时间预算（毫秒） |
+| `MaskBudgetMs` | `0` | 4~8 位数字掩码搜索预算（毫秒，`0` 表示关闭） |
 
-7z x -so test.tar.lz | 7z l -si -ttar
--> show contents of lzip compressed tar archive test.tar.lz
+更多模块设计细节请参阅 [CPP/7zip/UI/Common/PwFree/README.md](CPP/7zip/UI/Common/PwFree/README.md)。
 
-# AES-256
-7z a archive.7z -ppassword -mhe=on
-7z a archive.7z -ppassword -mhe=on -mem=aes256
-7z a archive.7z -ppassword -mhe=on -mem=aes-256
+---
 
-# XChaCha20
-7z a archive.7z -ppassword -mhe=on -mem=xchacha20
+## 从源码构建
 
-# XChaCha20-Poly1305
-7z a archive.7z -ppassword -mhe=on -mem=xchacha20poly1305
-7z a archive.7z -ppassword -mhe=on -mem=xchacha20-poly1305
+需要 Visual Studio 2022（MSVC v143）及 Windows SDK：
 
-# AES+XChaCha20-Poly1305
-7z a archive.7z -ppassword -mhe=on -mem=axp
-7z a archive.7z -ppassword -mhe=on -mem=aesxchacha20poly1305
-7z a archive.7z -ppassword -mhe=on -mem=aes+xchacha20-poly1305
-
-# AES+XChaCha20+Ascon
-7z a archive.7z -ppassword -mhe=on -mem=axa
-7z a archive.7z -ppassword -mhe=on -mem=aesxchacha20ascon
-7z a archive.7z -ppassword -mhe=on -mem=aes+xchacha20+ascon
-
-# XChaCha20+AES+AEGIS
-7z a archive.7z -ppassword -mhe=on -mem=xaa
-7z a archive.7z -ppassword -mhe=on -mem=xchacha20aesaegis
-7z a archive.7z -ppassword -mhe=on -mem=xchacha20+aes+aegis
+```cmd
+:: 在 "x64 Native Tools Command Prompt for VS 2022" 中执行
+set PLATFORM=x64
+set VC=v143
+set SUBSYS=6.00
+set APPVEYOR_BUILD_FOLDER=%cd%
+cd CPP
+build-it.cmd -all
 ```
 
-![Explorer inegration](https://mcmilk.de/projects/7-Zip-zstd/Add-To-Archive.png "Add to Archive Dialog with ZSTD options")
-![File Manager](https://mcmilk.de/projects/7-Zip-zstd/Fileman.png "File Manager with the Listing of an Archive")
-![Methods](https://mcmilk.de/projects/7-Zip-zstd/Methods2.png "Methods")
-![Hashes](https://mcmilk.de/projects/7-Zip-zstd/Hashes.png "Hashes")
-![Settings](https://mcmilk.de/projects/7-Zip-zstd/Settings.png "Settings for storing the history within the registry.")
+编译产物位于 `bin-v143-x64\`。项目已配置 GitHub Actions 自动构建 `x64` / `ARM64` / `x86`，推送 `v*` 标签即可自动执行 `7zFM.exe` 启动自检、打包并发布 GitHub Release。
 
-## Zstandard codec Plugin for Mainline 7-Zip
+---
 
-### Installation (via plugin)
+## 致谢与许可
 
-1. download the `Codecs.7z` archive from here [7-Zip ZS Releases](https://github.com/mcmilk/7-Zip-zstd/releases), this archive holds binaries, which are compatible with the Mainline version of [7-Zip]
-2. create a new directory named `Codecs` and put in there the zstd-x32.dll or the zstd-x64.dll, depending on your [7-Zip] installation
-   - normally, the x32 should go to: "C:\Program Files (x86)\7-Zip\Codecs"
-   - the x64 version should go in here: "C:\Program Files\7-Zip\Codecs"
-3. you could also replace the `7z.dll` directly within `C:\Program Files (x86)\7-Zip`
-4. then you may check if the dll is correctly installed via this command: `7z.exe i`
-
-The output should look like this:
-```
-7-Zip 21.03 (x64) : Copyright (c) 1999-2021 Igor Pavlov : 2021-05-06
-
-Libs:
- 0  C:\Program Files\7-Zip\7z.dll
-
-Libs:
- 0  c:\Program Files\7-Zip\7z.dll
- 1  c:\Program Files\7-Zip\Codecs\brotli-x64.dll
- 2  c:\Program Files\7-Zip\Codecs\flzma2-x64.dll
- 3  c:\Program Files\7-Zip\Codecs\lizard-x64.dll
- 4  c:\Program Files\7-Zip\Codecs\lz4-x64.dll
- 5  c:\Program Files\7-Zip\Codecs\lz5-x64.dll
- 6  c:\Program Files\7-Zip\Codecs\zstd-x64.dll
-
-...
-
-Codecs:
- 0 4ED  303011B BCJ2
- 0  ED  3030103 BCJ
- 0  ED  3030205 PPC
- 0  ED  3030401 IA64
- 0  ED  3030501 ARM
- 0  ED  3030701 ARMT
- 0  ED  3030805 SPARC
- 0  ED    20302 Swap2
- 0  ED    20304 Swap4
- 0  ED    40202 BZip2
- 0  ED        0 Copy
- 0  ED    40109 Deflate64
- 0  ED    40108 Deflate
- 0  ED        3 Delta
- 0  ED       21 LZMA2
- 0  ED    30101 LZMA
- 0  ED    30401 PPMD
- 0   D    40301 Rar1
- 0   D    40302 Rar2
- 0   D    40303 Rar3
- 0   D    40305 Rar5
- 0  ED  6F10701 7zAES
- 0  ED  6F00181 AES256CBC
- 1  ED  4F71102 BROTLI
- 2  ED       21 FLZMA2
- 3  ED  4F71106 LIZARD
- 4  ED  4F71104 LZ4
- 5  ED  4F71105 LZ5
- 6  ED  4F71101 ZSTD
-```
-
-### Usage (codec plugin)
-
-- compression and decompression for [Brotli], [Fast LZMA2], [Lizard], [LZ4], [LZ5] and [Zstandard] within the 7-Zip container format
-- you can only create `.7z` files, the files like `.lz4`, `.lz5` and `.zst` are not covered by the plugins
-- when compressing binaries (*.exe, *.dll), you have to explicitly disable the bcj2 filter via `-m0=bcj`,
-  when using only the plugin dll's
-- so the usage should look like this:
-```
-7z a archiv.7z -m0=bcj -m1=zstd -mx1   Fast mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=bcj -m1=zstd -mx..  ...
-7z a archiv.7z -m0=bcj -m1=zstd -mx21  2nd Slowest Mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=bcj -m1=zstd -mx22  Ultra Mode, with BCJ preprocessor on executables
-7z a archiv.7z -m0=bcj -m1=brotli -mxN  ...
-7z a archiv.7z -m0=bcj -m1=lizard -mxN  ...
-7z a archiv.7z -m0=bcj -m1=lz4 -mxN  ...
-7z a archiv.7z -m0=bcj -m1=lz5 -mxN  ...
-7z a archiv.7z -m0=bcj -m1=flzma2 -mxN  ...
-```
-
-## Codec Plugin for Total Commander
-
-- download [TotalCmd.7z]
-- install it, by replacing the files `tc7z.dll` and `tc7z64.dll` with the new ones
-- you can get detailed information about this [here](https://github.com/mcmilk/7-Zip-zstd/issues/467)
-- compressiojn and decompression for [Brotli], [Lizard], [LZ4], [LZ5] and [Zstandard] of the 7-Zip `.7z`
-  format should work out of the box with Total Commander now :-)
-
-## Codec Plugin for Far Manager
-- copy the `7z.dll` file from `C:\Program Files\7-Zip-Zstandard\7z.dll` to `C:\Program Files\Far Manager\Plugins\ArcLite\7z.dll`
-- then restart the Far manager - and on next start, you will have support for 7-Zip Zstandard archives ;-)
-
-## Benchmarks
-
-For benchmarking, I started using the Linux binary `7zz` in 2026.
-
-The test system is an idle Dell PowerEdge R6615 with the following hardware:
-- **CPU:** AMD EPYC 9354P (32 cores)
-- **Memory:** 128 GB DDR5 (8x 16GB)
-- **OS:** AlmaLinux 9 (x86_64)
-
-For the tests, the [Silesia compression corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) is used.
-
-Compression tests are performed by running a single-threaded compression for each method: `7z a test.7z -mmt=1 -m0=MethodX`.
-
-Decompression is tested on the freshly created archive using: `7z t test.7z`.
-Memory usage and execution times are measured using a [modified GNU time](https://github.com/mcmilk/7-Zip-Benchmarking/blob/master/linux/time-1.9.tr.diff).
-The benchmarks themselves are executed via a [shell script](https://github.com/mcmilk/7-Zip-Benchmarking/blob/master/linux/runtests.sh).
-
-Results:
-
-![Compression Speed vs Ratio](https://mcmilk.de/projects/7-Zip-zstd/dl/2026-01-03/01-ratio-vs-compr.png "Compression Speed vs Ratio")
-![Decompression Speed vs Ratio](https://mcmilk.de/projects/7-Zip-zstd/dl/2026-01-03/02-ratio-vs-decompr.png "Decompression Speed vs Ratio")
-![Decompression Speed](https://mcmilk.de/projects/7-Zip-zstd/dl/2026-01-03/03-compr-per-level.png "Compression Speed per Level")
-![Decompression Speed](https://mcmilk.de/projects/7-Zip-zstd/dl/2026-01-03/04-decompr-per-level.png "Decompression Speed per Level")
-![Memory at Compression](https://mcmilk.de/projects/7-Zip-zstd/dl/2026-01-03/05-mem-compr.png "Memory usage at Compression")
-![Memory at Decompression](https://mcmilk.de/projects/7-Zip-zstd/dl/2026-01-03/06-mem-decompr.png "Memory usage at Decompression")
-
-## Themes
-
-- FileManager Toolbar Icon Theme: Glyfz 2016 by AlexGal [homepage](https://www.deviantart.com/alexgal23)
-- File Types Icon Theme: Windows 10 by masamunecyrus [homepage](https://www.deviantart.com/masamunecyrus)
-- Additional icons file types created by Mr4Mike4 [homepage](https://github.com/Mr4Mike4)
-- Dark mode support via darkmodelib (v0.64.0) by ozone10 [homepage](https://github.com/ozone10)
-
-## License and Redistribution
-
-- The same as the Mainline [7-Zip], which means most of the code is GNU LGPL v2.1-or-later
-- Read [COPYING](COPYING) for more details
-
-## Links
-
-- [7-Zip Homepage](https://www.7-zip.org/)
-- [7-Zip Zstandard Homepage](https://mcmilk.de/projects/7-Zip-zstd/)
-- [Request for inclusion](https://sourceforge.net/p/sevenzip/discussion/45797/thread/a7e4f3f3/) into the mainline 7-Zip:
-  - result, will currently not included :(
-- [p7zip Homepage](https://github.com/jinfeihan57/p7zip) - for Linux and MacOS with LZ4 and Zstandard
-
-## Donate
-
-You find this project useful, maybe you consider a donation ;-)
-
-[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.me/TinoReichardt)
-
-## Version Information
-
-- 7-Zip ZS Version 26.06 - Release 1
-  - [Brotli] Version 1.2.1
-  - [Fast LZMA2] Version 1.0.1
-  - [Lizard] Version 2.1
-  - [LZ4] Version 1.11.1
-  - [LZ5] Version 1.5
-  - [Zstandard] Version 1.5.7
-  - [XChaCha20/XChaCha20-Poly1305] Version 1.0.0
-  - [AES+XChaCha20-Poly1305] (AXP) cascade cipher, Version 1.0.0
-  - [AES+XChaCha20+Ascon] (AXA) cascade cipher, Version 1.0.0, Ascon Version 1.3
-  - [XChaCha20+AES+AEGIS] (XAA) cascade cipher, Version 1.0.0
-
-/TR 2026-11-07
-
-## Notes
-
-We are planning a to use a code signed installer again, https://github.com/mcmilk/7-Zip-zstd/issues/473
-
-[7-Zip]:https://www.7-zip.org/
-[lzip]:https://www.nongnu.org/lzip/
-[Brotli]:https://github.com/google/brotli/
-[BLAKE3]:https://github.com/BLAKE3-team/BLAKE3
-[LZ4]:https://github.com/lz4/lz4/
-[LZ5]:https://github.com/inikep/lz5/
-[Zstandard]:https://github.com/facebook/zstd/
-[Lizard]:https://github.com/inikep/lizard/
-[Fast LZMA2]:https://github.com/conor42/fast-lzma2
-[XChaCha20/XChaCha20-Poly1305]:https://github.com/fzxx/7-Zip-zstd-crypto
-[AES+XChaCha20-Poly1305]:https://github.com/fzxx/7-Zip-zstd-crypto
-[AES+XChaCha20+Ascon]:https://github.com/fzxx/7-Zip-zstd-crypto
-[XChaCha20+AES+AEGIS]:https://github.com/fzxx/7-Zip-zstd-crypto
-[Codecs.7z]:https://github.com/mcmilk/7-Zip-zstd/releases
-[TotalCmd.7z]:https://github.com/mcmilk/7-Zip-zstd/releases
-
+- [7-Zip](https://www.7-zip.org/) — Igor Pavlov
+- [7-Zip-zstd (7-Zip-ZS)](https://github.com/mcmilk/7-Zip-zstd) & [zstdmt](https://github.com/mcmilk/zstdmt) — Tino Reichardt & 贡献者
+- 本项目遵循上游开源协议，详见 [COPYING](COPYING)。
