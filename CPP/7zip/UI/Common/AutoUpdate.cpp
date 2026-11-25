@@ -15,8 +15,12 @@ namespace {
 const wchar_t * const kRegKeyPath = L"Software\\7-Zip-Zstandard\\UnlockZip";
 const unsigned kCurMajor = 2;
 const unsigned kCurMinor = 1;
-const unsigned kCurPatch = 1;
-const wchar_t * const kCurVersionStr = L"v2.1.1";
+const unsigned kCurPatch = 2;
+const wchar_t * const kCurVersionStr = L"v2.1.2";
+
+#ifndef WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
+#define WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 4
+#endif
 
 const wchar_t * const kApiHost = L"api.github.com";
 const wchar_t * const kApiPath = L"/repos/Xitaoyou/7-Zip-ZS-PwFree/releases/latest";
@@ -90,11 +94,14 @@ struct CThreadArg
 };
 
 bool HttpGetToBuffer(CWinHttpApi &api, const wchar_t *host, INTERNET_PORT port,
-    const wchar_t *path, bool https, AString &outBuf, size_t maxBytes)
+    const wchar_t *path, bool https, const wchar_t *headers, AString &outBuf, size_t maxBytes)
 {
   outBuf.Empty();
-  HINTERNET hSession = api.pOpen(L"UnlockZip/2.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+  HINTERNET hSession = api.pOpen(L"UnlockZip/2.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!hSession)
+    hSession = api.pOpen(L"UnlockZip/2.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
   if (!hSession)
     return false;
   if (api.pSetTimeouts)
@@ -109,8 +116,8 @@ bool HttpGetToBuffer(CWinHttpApi &api, const wchar_t *host, INTERNET_PORT port,
         WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
     if (hRequest)
     {
-      if (api.pSendRequest(hRequest, L"Accept: application/vnd.github+json\r\n",
-          (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+      if (api.pSendRequest(hRequest, headers ? headers : WINHTTP_NO_ADDITIONAL_HEADERS,
+          headers ? (DWORD)-1L : 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
           && api.pReceiveResponse(hRequest, NULL))
       {
         ok = true;
@@ -160,8 +167,11 @@ bool HttpDownloadFile(CWinHttpApi &api, const wchar_t *url, const wchar_t *destP
   if (!api.pCrackUrl(url, 0, 0, &uc))
     return false;
 
-  HINTERNET hSession = api.pOpen(L"UnlockZip/2.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+  HINTERNET hSession = api.pOpen(L"UnlockZip/2.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!hSession)
+    hSession = api.pOpen(L"UnlockZip/2.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
   if (!hSession)
     return false;
   if (api.pSetTimeouts)
@@ -295,10 +305,37 @@ DWORD WINAPI UpdateCheckThread(LPVOID param)
 
   CWinHttpApi api;
   AString json;
-  if (api.Load() && HttpGetToBuffer(api, kApiHost, INTERNET_DEFAULT_HTTPS_PORT, kApiPath, true, json, 512 * 1024))
+  if (api.Load())
   {
     AString tag;
-    if (ExtractJsonStringField(json, "tag_name", tag))
+    if (HttpGetToBuffer(api, kApiHost, INTERNET_DEFAULT_HTTPS_PORT, kApiPath, true,
+        L"Accept: application/vnd.github+json\r\n", json, 512 * 1024))
+    {
+      ExtractJsonStringField(json, "tag_name", tag);
+    }
+
+    // Fallback to GitHub web releases/latest (immune to API 403 rate limits)
+    if (tag.IsEmpty())
+    {
+      AString html;
+      if (HttpGetToBuffer(api, L"github.com", INTERNET_DEFAULT_HTTPS_PORT,
+          L"/Xitaoyou/7-Zip-ZS-PwFree/releases/latest", true, NULL, html, 1024 * 1024))
+      {
+        const char *marker = "/Xitaoyou/7-Zip-ZS-PwFree/releases/tag/";
+        int p = html.Find(marker);
+        if (p >= 0)
+        {
+          p += (int)strlen(marker);
+          int end = p;
+          while (end < (int)html.Len() && html[end] != '"' && html[end] != '\'' && html[end] != '<' && html[end] != '?')
+            end++;
+          if (end > p)
+            tag.SetFrom(html.Ptr((unsigned)p), (unsigned)(end - p));
+        }
+      }
+    }
+
+    if (!tag.IsEmpty())
     {
       res->FetchOk = true;
       for (unsigned i = 0; i < tag.Len(); i++)
@@ -325,6 +362,12 @@ DWORD WINAPI UpdateCheckThread(LPVOID param)
             }
           }
           searchPos = foundPos + 20;
+        }
+        if (res->DownloadUrl.IsEmpty())
+        {
+          res->DownloadUrl = L"https://github.com/Xitaoyou/7-Zip-ZS-PwFree/releases/download/";
+          res->DownloadUrl += res->LatestTag;
+          res->DownloadUrl += L"/UnlockZip-x64-setup.exe";
         }
       }
     }
