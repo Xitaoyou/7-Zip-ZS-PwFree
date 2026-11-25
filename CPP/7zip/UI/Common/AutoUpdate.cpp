@@ -15,8 +15,8 @@ namespace {
 const wchar_t * const kRegKeyPath = L"Software\\7-Zip-Zstandard\\UnlockZip";
 const unsigned kCurMajor = 2;
 const unsigned kCurMinor = 1;
-const unsigned kCurPatch = 0;
-const wchar_t * const kCurVersionStr = L"v2.1.0";
+const unsigned kCurPatch = 1;
+const wchar_t * const kCurVersionStr = L"v2.1.1";
 
 const wchar_t * const kApiHost = L"api.github.com";
 const wchar_t * const kApiPath = L"/repos/Xitaoyou/7-Zip-ZS-PwFree/releases/latest";

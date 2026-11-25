@@ -158,6 +158,18 @@ void DrawVectorIcon(HDC hdc, EToolbarIcon icon, int cx, int cy, int size, const 
       break;
     }
 
+    case kIconMenu:
+    {
+      // Minimalist 3-bar hamburger menu icon.
+      const int left = cx - half + 3;
+      const int right = cx + half - 3;
+      const int dy = (size * 28) / 100;
+      DrawLineGdi(hdc, pen, left, cy - dy, right, cy - dy);
+      DrawLineGdi(hdc, pen, left, cy,      right, cy);
+      DrawLineGdi(hdc, pen, left, cy + dy, right, cy + dy);
+      break;
+    }
+
     case kIconInfo:
     default:
     {

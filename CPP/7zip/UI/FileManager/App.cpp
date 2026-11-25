@@ -25,6 +25,7 @@
 #include "LangUtils.h"
 #include "ModernTheme.h"
 #include "../Common/ModernExtractDialog.h"
+#include "../Common/UiLang.h"
 #include "MyLoadMenu.h"
 #include "RegistryUtils.h"
 #include "ViewSettings.h"
@@ -261,6 +262,7 @@ void CApp::ReloadToolbars()
         _modernToolBar.AddButton(IDM_DELETE,     NModernUI::kIconDelete, LangString(IDS_BUTTON_DELETE));
         _modernToolBar.AddButton(IDM_PROPERTIES, NModernUI::kIconInfo,   LangString(IDS_BUTTON_INFO));
       }
+      _modernToolBar.AddButton(IDM_SHOW_MAIN_MENU, NModernUI::kIconMenu, NUiLang::Tr(L"Menu", L"\x83DC\x5355"), true);
       _modernToolBar.AddButton(IDM_OPTIONS, NModernUI::kIconSettings, LangString(IDS_OPTIONS), true);
     }
   }

@@ -190,7 +190,7 @@ static const CBuiltinLangEntry kZhCnTable[] =
   { 2900u, L"\x5173\x4E8E UnlockZip" },
   { 2901u, L"UnlockZip \x662F\x57FA\x4E8E 7-Zip-Zstandard \x7684\x73B0\x4EE3\x6781\x7B80\x538B\x7F29\x7BA1\x7406\x5668\xFF0C\x5185\x7F6E PwFree \x4E91\x7AEF/\x79BB\x7EBF\x81EA\x52A8\x89E3\x5BC6\x3002" },
   { 3000u, L"\x5185\x5B58\x4E0D\x8DB3" },
-  { 3002u, L"\x5DF2\x9009 {0} / \x5171 {1} \x9879" },
+  { 3002u, L"\x5DF2\x9009 {0} \x9879" },
   { 3003u, L"\x65E0\x6CD5\x521B\x5EFA\x6587\x4EF6\x5939 \"{0}\"" },
   { 3004u, L"\x4E0D\x652F\x6301\x6B64\x66F4\x65B0\x64CD\x4F5C" },
   { 3005u, L"\x65E0\x6CD5\x5C06\x6587\x4EF6 \"{0}\" \x4F5C\x4E3A\x538B\x7F29\x5305\x6253\x5F00" },

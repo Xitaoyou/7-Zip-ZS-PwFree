@@ -9,6 +9,7 @@ void OnMenuActivating(HWND hWnd, HMENU hMenu, int position);
 
 bool OnMenuCommand(HWND hWnd, unsigned id);
 void MyLoadMenu(bool needResetMenu);
+void ShowMainMenuPopup(HWND hWnd, int x, int y);
 
 struct CFileMenu
 {

@@ -18,7 +18,8 @@ enum EToolbarIcon
   kIconMove,
   kIconDelete,
   kIconInfo,
-  kIconSettings
+  kIconSettings,
+  kIconMenu
 };
 
 struct CToolbarItem

@@ -11,6 +11,7 @@
 
 #include "../Common/CompressCall.h"
 #include "../Common/AutoUpdate.h"
+#include "../Common/UiLang.h"
 
 #include "AboutDialog.h"
 #include "App.h"
@@ -321,6 +322,15 @@ static void CopyMenu(HMENU srcMenuSpec, HMENU destMenuSpec)
     false : for call from program window creation code
     true  : for another calls : (from Options language change)
 */
+static HMENU g_HiddenMainMenu = NULL;
+
+static HMENU GetAppMainMenu()
+{
+  if (g_HiddenMainMenu)
+    return g_HiddenMainMenu;
+  return ::GetMenu(g_HWND);
+}
+
 void MyLoadMenu(bool needResetMenu)
 {
   #ifdef UNDER_CE
@@ -332,7 +342,7 @@ void MyLoadMenu(bool needResetMenu)
   const HMENU baseMenu = g_App._commandBar.GetMenu(0);
   // if (startInit)
   // SetIdsForSubMenus(baseMenu, 0, 0);
-  if (!g_LangID.IsEmpty())
+  if (!g_LangID.IsEmpty() || NUiLang::IsZhCn())
     MyChangeMenu(baseMenu, 0, 0);
   g_App._commandBar.DrawMenuBar(0);
  
@@ -340,36 +350,31 @@ void MyLoadMenu(bool needResetMenu)
 
   const HWND hWnd = g_HWND;
   bool menuWasChanged = false;
-  /*
-     We must reload to english default menu for at least two cases:
-     - if some submenu was changed (File or another submenu can be changed after menu activating).
-     - for change from non-english lang to another partial non-english lang,
-       where we still need some english strings.
-     But we reload menu to default menu everytime except of program starting stage.
-     That scheme is simpler than complex checks for exact conditions for menu reload.
-  */
-  if (needResetMenu)
+
+  if (needResetMenu || !g_HiddenMainMenu)
   {
-    const HMENU oldMenu = ::GetMenu(hWnd);
-    const HMENU newMenu = ::LoadMenu(g_hInstance, MAKEINTRESOURCE(IDM_MENU));
-    // docs for SetMenu(): the window is redrawn to reflect the menu change.
-    if (newMenu && ::SetMenu(hWnd, newMenu))
-      ::DestroyMenu(oldMenu);
+    const HMENU oldWinMenu = ::GetMenu(hWnd);
+    if (oldWinMenu)
+    {
+      ::SetMenu(hWnd, NULL);
+      ::DestroyMenu(oldWinMenu);
+    }
+    if (g_HiddenMainMenu)
+    {
+      ::DestroyMenu(g_HiddenMainMenu);
+      g_HiddenMainMenu = NULL;
+    }
+    g_HiddenMainMenu = ::LoadMenu(g_hInstance, MAKEINTRESOURCE(IDM_MENU));
     menuWasChanged = true;
   }
-  const HMENU baseMenu = ::GetMenu(hWnd);
-  // if (startInit)
-  // SetIdsForSubMenus(baseMenu, 0, 0);
+  const HMENU baseMenu = GetAppMainMenu();
   #ifdef Z7_LANG
-  if (!g_Lang.IsEmpty()) // !g_LangID.IsEmpty() &&
+  if (baseMenu && (!g_Lang.IsEmpty() || NUiLang::IsZhCn()))
   {
     MyChangeMenu(baseMenu, 0, 0, 0);
     menuWasChanged = true;
   }
   #endif
-
-  if (menuWasChanged)
-    ::DrawMenuBar(hWnd);
 
   #endif // UNDER_CE
 
@@ -383,13 +388,52 @@ void MyLoadMenu(bool needResetMenu)
   }
 }
 
+void ShowMainMenuPopup(HWND hWnd, int x, int y)
+{
+  HMENU baseMenu = GetAppMainMenu();
+  if (!baseMenu)
+    return;
+
+  HMENU pop = ::CreatePopupMenu();
+  if (!pop)
+    return;
+
+  const int count = ::GetMenuItemCount(baseMenu);
+  for (int i = 0; i < count; i++)
+  {
+    HMENU sub = ::GetSubMenu(baseMenu, i);
+    wchar_t buf[128];
+    buf[0] = 0;
+    MENUITEMINFOW mii;
+    memset(&mii, 0, sizeof(mii));
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_STRING;
+    mii.dwTypeData = buf;
+    mii.cch = 127;
+    ::GetMenuItemInfoW(baseMenu, (UINT)i, TRUE, &mii);
+
+    if (sub)
+    {
+      OnMenuActivating(hWnd, sub, i);
+      ::AppendMenuW(pop, MF_POPUP | MF_STRING, (UINT_PTR)sub, buf);
+    }
+  }
+
+  ::SetForegroundWindow(hWnd);
+  ::TrackPopupMenuEx(pop, TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON, x, y, hWnd, NULL);
+  // Remove submenus before destroying pop so g_HiddenMainMenu keeps owning them.
+  for (int i = count - 1; i >= 0; i--)
+    ::RemoveMenu(pop, (UINT)i, MF_BYPOSITION);
+  ::DestroyMenu(pop);
+}
+
 void OnMenuActivating(HWND /* hWnd */, HMENU hMenu, int position)
 {
   HMENU mainMenu =
     #ifdef UNDER_CE
     g_App._commandBar.GetMenu(0);
     #else
-    ::GetMenu(g_HWND)
+    GetAppMainMenu()
     #endif
     ;
   
@@ -565,7 +609,7 @@ void OnMenuActivating(HWND /* hWnd */, HMENU hMenu, int position)
 It doesn't help
 void OnMenuUnActivating(HWND hWnd, HMENU hMenu, int id)
 {
-  if (::GetSubMenu(::GetMenu(g_HWND), 0) != hMenu)
+  if (::GetSubMenu(GetAppMainMenu(), 0) != hMenu)
     return;
 }
 */
@@ -876,7 +920,7 @@ bool OnMenuCommand(HWND hWnd, unsigned id)
         g_App.SetListViewMode(index);
         /*
         CMenu menu;
-        menu.Attach(::GetSubMenu(::GetMenu(hWnd), k_MenuIndex_View));
+        menu.Attach(::GetSubMenu(GetAppMainMenu(), k_MenuIndex_View));
         menu.CheckRadioItem(IDM_VIEW_LARGE_ICONS, IDM_VIEW_DETAILS,
             id, MF_BYCOMMAND);
         */
@@ -931,6 +975,15 @@ bool OnMenuCommand(HWND hWnd, unsigned id)
     case IDM_CHECK_UPDATE:
     {
       NAutoUpdate::StartUpdateCheckAsync(hWnd, true);
+      break;
+    }
+    case IDM_SHOW_MAIN_MENU:
+    {
+      RECT wr;
+      if (::GetWindowRect(g_App._modernToolBar, &wr))
+        ShowMainMenuPopup(hWnd, wr.right - 8, wr.bottom);
+      else
+        ShowMainMenuPopup(hWnd, 100, 100);
       break;
     }
     case IDM_ABOUT:
