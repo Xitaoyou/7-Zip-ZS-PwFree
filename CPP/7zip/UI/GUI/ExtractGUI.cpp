@@ -368,11 +368,13 @@ HRESULT ExtractGUI(
   #endif
 
   extracter.IconID = IDI_ICON;
+  #ifndef Z7_SFX
   if (!options.TestMode && !OpnTrgFold)
   {
     extracter.StayOnComplete = true;
     extracter.CompleteOpenDir = fs2us(options.OutputDir);
   }
+  #endif
 
   RINOK(extracter.Create(title, hwndParent))
   messageWasDisplayed = extracter.ThreadFinishedOK && extracter.MessagesDisplayed;
