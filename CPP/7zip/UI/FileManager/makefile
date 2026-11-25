@@ -69,6 +69,7 @@ UI_COMMON_OBJS = \
   $O\ArchiveExtractCallback.obj \
   $O\ArchiveName.obj \
   $O\ArchiveOpenCallback.obj \
+  $O\AutoUpdate.obj \
   $O\CompressCall.obj \
   $O\DefaultName.obj \
   $O\EnumDirItems.obj \

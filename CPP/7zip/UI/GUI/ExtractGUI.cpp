@@ -271,6 +271,7 @@ HRESULT ExtractGUI(
           if (mopt.ExtractToArchiveFolder && archivePathsFull.Size() == 1)
             NModernUI::AppendArchiveNameSubfolder(chosenDir, archivePathsFull[0]);
           outputDir = us2fs(chosenDir);
+          OpnTrgFold = mopt.OpenTargetFolderAfterExtract;
           deleteArchiveAfter = mopt.DeleteArchiveAfterExtract;
         }
       }
@@ -367,6 +368,11 @@ HRESULT ExtractGUI(
   #endif
 
   extracter.IconID = IDI_ICON;
+  if (!options.TestMode && !OpnTrgFold)
+  {
+    extracter.StayOnComplete = true;
+    extracter.CompleteOpenDir = fs2us(options.OutputDir);
+  }
 
   RINOK(extracter.Create(title, hwndParent))
   messageWasDisplayed = extracter.ThreadFinishedOK && extracter.MessagesDisplayed;

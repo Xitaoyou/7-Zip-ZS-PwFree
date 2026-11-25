@@ -32,7 +32,8 @@ enum
   kIdBtnAdvanced  = 2008,
   kIdBtnOk        = IDOK,
   kIdBtnCancel    = IDCANCEL,
-  kIdFallbackTree = 2009
+  kIdFallbackTree = 2009,
+  kIdChkOpenDir   = 2010
 };
 
 struct CQuickPlace
@@ -97,6 +98,9 @@ void LoadPersistedOptions(CModernExtractOptions &opt, UStringVector &history)
     sz = sizeof(val);
     if (::RegQueryValueExW(hKey, L"ExtractDeleteArc", NULL, NULL, (LPBYTE)&val, &sz) == ERROR_SUCCESS)
       opt.DeleteArchiveAfterExtract = (val != 0);
+    sz = sizeof(val);
+    if (::RegQueryValueExW(hKey, L"ExtractOpenTargetFolder", NULL, NULL, (LPBYTE)&val, &sz) == ERROR_SUCCESS)
+      opt.OpenTargetFolderAfterExtract = (val != 0);
   }
 
   for (unsigned i = 0; i < 10; i++)
@@ -130,8 +134,10 @@ void SavePersistedOptions(const CModernExtractOptions &opt, const UString &chose
   {
     const DWORD toArc = opt.ExtractToArchiveFolder ? 1u : 0u;
     const DWORD delArc = opt.DeleteArchiveAfterExtract ? 1u : 0u;
+    const DWORD openDir = opt.OpenTargetFolderAfterExtract ? 1u : 0u;
     ::RegSetValueExW(hKey, L"ExtractToArcFolder", 0, REG_DWORD, (const BYTE *)&toArc, sizeof(toArc));
     ::RegSetValueExW(hKey, L"ExtractDeleteArc", 0, REG_DWORD, (const BYTE *)&delArc, sizeof(delArc));
+    ::RegSetValueExW(hKey, L"ExtractOpenTargetFolder", 0, REG_DWORD, (const BYTE *)&openDir, sizeof(openDir));
   }
 
   UStringVector merged;
@@ -221,6 +227,7 @@ public:
   HWND _hBtnNewFolder;
   HWND _hChkArcFolder;
   HWND _hChkDeleteArc;
+  HWND _hChkOpenDir;
   HWND _hChkRemember;
   HWND _hBtnAdvanced;
   HWND _hBtnOk;
@@ -249,7 +256,7 @@ public:
     _hWnd(NULL), _hParent(parent),
     _hLabelPath(NULL), _hComboPath(NULL), _hTreeHwnd(NULL),
     _hLabelExtract(NULL), _hRadioAll(NULL), _hRadioSel(NULL),
-    _hBtnNewFolder(NULL), _hChkArcFolder(NULL), _hChkDeleteArc(NULL),
+    _hBtnNewFolder(NULL), _hChkArcFolder(NULL), _hChkDeleteArc(NULL), _hChkOpenDir(NULL),
     _hChkRemember(NULL), _hBtnAdvanced(NULL), _hBtnOk(NULL), _hBtnCancel(NULL),
     _nstc(NULL), _sink(NULL), _adviseCookie(0), _updatingTree(false),
     _bgSurfaceBrush(NULL), _bgContentBrush(NULL),
@@ -437,7 +444,7 @@ public:
     const int gap = ScaleDip(10, dpi);
     const int topRowH = ScaleDip(26, dpi);
     const int labelW = ScaleDip(82, dpi);
-    const int bottomAreaH = ScaleDip(144, dpi);
+    const int bottomAreaH = ScaleDip(170, dpi);
     const int sideW = ScaleDip(104, dpi);
 
     // Top row: Target path(D) + ComboBox
@@ -493,7 +500,10 @@ public:
     ::MoveWindow(_hChkRemember, W - pad - remW, y, remW, ScaleDip(22, dpi), TRUE);
 
     y += ScaleDip(26, dpi);
-    ::MoveWindow(_hChkDeleteArc, pad, y, W - pad * 2 - ScaleDip(190, dpi), ScaleDip(22, dpi), TRUE);
+    ::MoveWindow(_hChkDeleteArc, pad, y, W - pad * 2, ScaleDip(22, dpi), TRUE);
+
+    y += ScaleDip(26, dpi);
+    ::MoveWindow(_hChkOpenDir, pad, y, W - pad * 2 - ScaleDip(190, dpi), ScaleDip(22, dpi), TRUE);
 
     const int btnW = ScaleDip(88, dpi);
     const int btnH = ScaleDip(30, dpi);
@@ -560,6 +570,13 @@ public:
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
         0, 0, 260, 22, _hWnd, (HMENU)(INT_PTR)kIdChkDeleteArc, g_hInstance, NULL);
 
+    _hChkOpenDir = ::CreateWindowExW(0, L"BUTTON",
+        NUiLang::Tr(
+            L"Open folder and close when done(&O)",
+            L"\x89E3\x538B\x5B8C\x6210\x540E\x6253\x5F00\x76EE\x6807\x76EE\x5F55\x5E76\x5173\x95ED\x7A97\x53E3(&O)"),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+        0, 0, 320, 22, _hWnd, (HMENU)(INT_PTR)kIdChkOpenDir, g_hInstance, NULL);
+
     _hBtnAdvanced = ::CreateWindowExW(0, L"BUTTON",
         NUiLang::Tr(L"Advanced...", L"\x9AD8\x7EA7\x9009\x9879..."),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
@@ -577,7 +594,7 @@ public:
 
     HWND ctrls[] = {
       _hLabelPath, _hComboPath, _hLabelExtract, _hRadioAll, _hRadioSel,
-      _hBtnNewFolder, _hChkArcFolder, _hChkDeleteArc, _hChkRemember,
+      _hBtnNewFolder, _hChkArcFolder, _hChkDeleteArc, _hChkOpenDir, _hChkRemember,
       _hBtnAdvanced, _hBtnOk, _hBtnCancel
     };
     for (unsigned i = 0; i < sizeof(ctrls) / sizeof(ctrls[0]); i++)
@@ -607,6 +624,7 @@ public:
 
     ::SendMessageW(_hChkArcFolder, BM_SETCHECK, _opt.ExtractToArchiveFolder ? BST_CHECKED : BST_UNCHECKED, 0);
     ::SendMessageW(_hChkDeleteArc, BM_SETCHECK, _opt.DeleteArchiveAfterExtract ? BST_CHECKED : BST_UNCHECKED, 0);
+    ::SendMessageW(_hChkOpenDir, BM_SETCHECK, _opt.OpenTargetFolderAfterExtract ? BST_CHECKED : BST_UNCHECKED, 0);
     ::SendMessageW(_hChkRemember, BM_SETCHECK, _opt.RememberSettings ? BST_CHECKED : BST_UNCHECKED, 0);
 
     InitQuickPlaces();
@@ -660,6 +678,7 @@ public:
       _opt.ExtractSelectedOnly = (::SendMessageW(_hRadioSel, BM_GETCHECK, 0, 0) == BST_CHECKED);
       _opt.ExtractToArchiveFolder = (::SendMessageW(_hChkArcFolder, BM_GETCHECK, 0, 0) == BST_CHECKED);
       _opt.DeleteArchiveAfterExtract = (::SendMessageW(_hChkDeleteArc, BM_GETCHECK, 0, 0) == BST_CHECKED);
+      _opt.OpenTargetFolderAfterExtract = (::SendMessageW(_hChkOpenDir, BM_GETCHECK, 0, 0) == BST_CHECKED);
       _opt.RememberSettings = (::SendMessageW(_hChkRemember, BM_GETCHECK, 0, 0) == BST_CHECKED);
       if (res == kExtractOk)
         SavePersistedOptions(_opt, _opt.TargetDir, _history);
@@ -1086,6 +1105,14 @@ bool MoveFileToRecycleBin(const UString &filePath)
   const int res = ::SHFileOperationW(&op);
   delete []buf;
   return (res == 0 && !op.fAnyOperationsAborted);
+}
+
+void OpenFolderInExplorer(const UString &dirPath)
+{
+  UString clean = StripTrailingSlash(dirPath);
+  if (clean.IsEmpty())
+    return;
+  ::ShellExecuteW(NULL, L"open", clean, NULL, NULL, SW_SHOWNORMAL);
 }
 
 } // namespace NModernUI

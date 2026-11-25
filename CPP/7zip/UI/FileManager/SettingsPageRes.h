@@ -18,6 +18,7 @@
 #define IDX_SETTINGS_PWFREE_CLOUD           2515
 #define IDX_SETTINGS_PWFREE_SOURCE          2516
 #define IDX_SETTINGS_PWFREE_DICT            2517
+#define IDX_SETTINGS_AUTO_UPDATE            2518
 
 #define IDT_MEM_USAGE_EXTRACT               7816
 

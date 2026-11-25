@@ -127,6 +127,7 @@
 
 #define IDM_HELP_CONTENTS        960
 #define IDM_ABOUT                961
+#define IDM_CHECK_UPDATE         962
 
 #define IDS_OPTIONS                     2100
 

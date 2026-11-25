@@ -114,11 +114,14 @@ class CProgressDialog: public NWindows::NControl::CModalDialog
   bool _inCancelMessageBox;
   bool _externalCloseMessageWasReceived;
   bool _background;
+  bool _completedSuccess;
 public:
   bool WaitMode;
   bool MessagesDisplayed; // = true if user pressed OK on all messages or there are no messages.
   bool CompressingMode;
   bool ShowCompressionInfo;
+  bool StayOnComplete;
+  UString CompleteOpenDir;
 
 private:
   unsigned _numPostedMessages;

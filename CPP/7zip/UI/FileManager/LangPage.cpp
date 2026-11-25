@@ -12,6 +12,7 @@
 #include "LangPageRes.h"
 #include "LangUtils.h"
 #include "RegistryUtils.h"
+#include "../Common/UiLang.h"
 
 using namespace NWindows;
 
@@ -238,6 +239,35 @@ bool CLangPage::OnInit()
       }
     }
     langInfo.NumLines = numLines + langInfo.ExtraLines.Size();
+  }
+
+  // Ensure built-in Simplified Chinese is always available in Language dropdown
+  {
+    bool hasZhCn = false;
+    FOR_VECTOR (i, _langs)
+    {
+      if (_langs[i].Name.IsEqualTo_Ascii_NoCase("zh-cn"))
+      {
+        hasZhCn = true;
+        break;
+      }
+    }
+    if (!hasZhCn)
+    {
+      CLangListRecord zhRec;
+      zhRec.Order = 0;
+      zhRec.Mark = PRIMARYLANGID(::GetUserDefaultUILanguage()) == LANG_CHINESE ? L"***" : L"";
+      zhRec.Name = L"Chinese (Simplified) : \x7B80\x4F53\x4E2D\x6587 (\x5185\x7F6E)";
+      zhRec.LangInfoIndex = _langs.Size();
+      listRecords.Add(zhRec);
+
+      CLangInfo &zhInfo = _langs.AddNew();
+      zhInfo.Name = "zh-cn";
+      zhInfo.NumLines = 240;
+
+      if (NUiLang::IsZhCn())
+        listRecords_SelectedIndex = listRecords.Size() - 1;
+    }
   }
 
   listRecords[listRecords_SelectedIndex].IsSelected = true;

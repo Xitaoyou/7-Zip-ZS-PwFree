@@ -273,6 +273,8 @@ struct CCopyToOptions
   bool includeAltStreams;
   bool replaceAltStreamChars;
   bool showErrorMessages;
+  bool stayOnComplete;
+  UString completeOpenDir;
 
   bool NeedRegistryZone;
   NExtract::NZoneIdMode::EEnum ZoneIdMode;
@@ -292,6 +294,7 @@ struct CCopyToOptions
       includeAltStreams(true),
       replaceAltStreamChars(false),
       showErrorMessages(false),
+      stayOnComplete(false),
       NeedRegistryZone(true),
       ZoneIdMode(NExtract::NZoneIdMode::kNone),
       VirtFileSystemSpec(NULL)

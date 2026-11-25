@@ -300,6 +300,8 @@ HRESULT CPanel::CopyTo(CCopyToOptions &options,
   extracter.MainWindow = GetParent();
   extracter.MainTitle = progressWindowTitle;
   extracter.MainAddTitle = title + L' ';
+  extracter.StayOnComplete = options.stayOnComplete;
+  extracter.CompleteOpenDir = options.completeOpenDir;
     
   extracter.ExtractCallbackSpec->OverwriteMode = NExtract::NOverwriteMode::kAsk;
   extracter.ExtractCallbackSpec->Init();

@@ -166,6 +166,7 @@ BEGIN
     MENUITEM "&Contents...\tF1",            IDM_HELP_CONTENTS
   #endif
     MY_MENUITEM_SEPARATOR
+  MENUITEM "Check for &Updates...",       IDM_CHECK_UPDATE
   MENUITEM "&About UnlockZip...",         IDM_ABOUT
   END
 END

@@ -33,6 +33,7 @@
 #include "resource.h"
 
 #include "App.h"
+#include "../Common/AutoUpdate.h"
 #include "FormatUtils.h"
 #include "LangUtils.h"
 #include "ModernTheme.h"
@@ -748,6 +749,10 @@ static int WINAPI WinMain2(int nCmdShow)
   OutputDebugStringW(L"After LoadGlobalCodecs");
   */
 
+  #ifndef UNDER_CE
+  NAutoUpdate::StartUpdateCheckAsync(g_HWND, false);
+  #endif
+
   #ifndef _UNICODE
   if (g_IsNT)
   {
@@ -897,6 +902,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
   switch (message)
   {
+    #ifndef UNDER_CE
+    case NAutoUpdate::kMsgUpdateCheckResult:
+    {
+      NAutoUpdate::HandleUpdateCheckResult(hWnd, lParam);
+      return 0;
+    }
+    #endif
+
     case WM_COMMAND:
     {
       unsigned wmId    = LOWORD(wParam);
@@ -1191,6 +1204,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
     */
   }
+  #ifndef UNDER_CE
+  NAutoUpdate::StartUpdateCheckAsync(g_HWND, false);
+  #endif
+
   #ifndef _UNICODE
   if (g_IsNT)
     return DefWindowProcW(hWnd, message, wParam, lParam);

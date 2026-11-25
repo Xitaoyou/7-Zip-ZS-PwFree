@@ -617,11 +617,14 @@ void CApp::OnCopy(bool move, bool copyToSame, unsigned srcPanelIndex)
   ReadCopyHistory(copyFolders);
   
   const bool useFullItemPaths = srcPanel.Is_IO_FS_Folder(); // maybe we need flat also here ??
+  bool isArchiveExtract = false;
+  bool openFolderAndClose = false;
   bool deleteArchiveAfterExtract = false;
   UString parentArchiveFilePath;
 
   if (!move && !copyToSame && !srcPanel.Is_IO_FS_Folder())
   {
+    isArchiveExtract = true;
     if (!srcPanel._parentFolders.IsEmpty() && !srcPanel._parentFolders[0].IsVirtual)
       parentArchiveFilePath = fs2us(srcPanel._parentFolders[0].FilePath);
 
@@ -641,6 +644,7 @@ void CApp::OnCopy(bool move, bool copyToSame, unsigned srcPanelIndex)
     destPath = mopt.TargetDir;
     if (mopt.ExtractToArchiveFolder && !parentArchiveFilePath.IsEmpty())
       NModernUI::AppendArchiveNameSubfolder(destPath, parentArchiveFilePath);
+    openFolderAndClose = mopt.OpenTargetFolderAfterExtract;
     deleteArchiveAfterExtract = mopt.DeleteArchiveAfterExtract;
 
     if (!mopt.ExtractSelectedOnly)
@@ -836,6 +840,11 @@ void CApp::OnCopy(bool move, bool copyToSame, unsigned srcPanelIndex)
     options.includeAltStreams = true;
     options.replaceAltStreamChars = false;
     options.showErrorMessages = true;
+    if (isArchiveExtract && !openFolderAndClose)
+    {
+      options.stayOnComplete = true;
+      options.completeOpenDir = destPath;
+    }
 
     result = srcPanel.CopyTo(options, indices, NULL);
   }
@@ -889,6 +898,14 @@ void CApp::OnCopy(bool move, bool copyToSame, unsigned srcPanelIndex)
       NModernUI::MoveFileToRecycleBin(parentArchiveFilePath);
       srcPanel.RefreshListCtrl();
     }
+  }
+
+  if (result == S_OK && isArchiveExtract && openFolderAndClose)
+  {
+    NModernUI::OpenFolderInExplorer(destPath);
+    if (_window)
+      ::PostMessageW(_window, WM_CLOSE, 0, 0);
+    return;
   }
 
   RefreshTitleAlways();

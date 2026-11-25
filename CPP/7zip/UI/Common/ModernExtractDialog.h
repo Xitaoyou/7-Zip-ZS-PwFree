@@ -27,6 +27,7 @@ struct CModernExtractOptions
   // Outputs (and persisted when RememberSettings is checked)
   bool ExtractToArchiveFolder;
   bool DeleteArchiveAfterExtract;
+  bool OpenTargetFolderAfterExtract;
   bool RememberSettings;
 
   CModernExtractOptions():
@@ -35,6 +36,7 @@ struct CModernExtractOptions
     ShowAdvancedLink(true),
     ExtractToArchiveFolder(false),
     DeleteArchiveAfterExtract(false),
+    OpenTargetFolderAfterExtract(true),
     RememberSettings(true)
   {}
 };
@@ -48,6 +50,9 @@ void AppendArchiveNameSubfolder(UString &dirPath, const UString &archivePath);
 
 // Safely moves a file to the Windows Recycle Bin (no confirmation, silent).
 bool MoveFileToRecycleBin(const UString &filePath);
+
+// Opens a directory in Windows Explorer.
+void OpenFolderInExplorer(const UString &dirPath);
 
 } // namespace NModernUI
 

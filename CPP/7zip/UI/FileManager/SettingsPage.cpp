@@ -22,6 +22,8 @@
 #include "LangUtils.h"
 #include "RegistryUtils.h"
 #include "SettingsPage.h"
+#include "../Common/UiLang.h"
+#include "../Common/AutoUpdate.h"
 
 #ifdef Z7_PWFREE
 #include "../Common/PwFree/PwFreeSettings.h"
@@ -54,6 +56,7 @@ static const UInt32 kLangIDs[] =
   IDX_SETTINGS_PWFREE_CLOUD,
   IDX_SETTINGS_PWFREE_DICT,
   IDX_SETTINGS_PWFREE_SOURCE,
+  IDX_SETTINGS_AUTO_UPDATE,
   IDT_MEM_USAGE_EXTRACT
   // , IDT_COMPRESS_MEMORY
 };
@@ -161,6 +164,7 @@ bool CSettingsPage::OnInit()
   // CheckButton(IDX_SETTINGS_UNDERLINE, st.Underline);
 
   CheckButton(IDX_SETTINGS_SHOW_SYSTEM_MENU, st.ShowSystemMenu);
+  CheckButton(IDX_SETTINGS_AUTO_UPDATE, NAutoUpdate::IsAutoUpdateEnabled());
 
   #ifdef Z7_PWFREE
   {
@@ -292,7 +296,11 @@ bool CSettingsPage::OnInit()
     if (isININotUsed)
     {
       _curClrMode = Read_ClrMode();
-      const wchar_t* modes[] = { L"classic", L"dark", L"system" };
+      const wchar_t* modes[] = {
+        NUiLang::Tr(L"Classic", L"\x7ECF\x5178\x6D45\x8272"),
+        NUiLang::Tr(L"Dark",    L"\x6DF1\x8272\x6A21\x5F0F"),
+        NUiLang::Tr(L"System",  L"\x8DDF\x968F\x7CFB\x7EDF")
+      };
       for (const auto& mode : modes)
       {
         _clrModeCombo.AddString(mode);
@@ -356,6 +364,7 @@ LONG CSettingsPage::OnApply()
     st.ShowSystemMenu = IsButtonCheckedBool(IDX_SETTINGS_SHOW_SYSTEM_MENU);
 
     st.Save();
+    NAutoUpdate::SetAutoUpdateEnabled(IsButtonCheckedBool(IDX_SETTINGS_AUTO_UPDATE));
 
     #ifdef Z7_PWFREE
     {
@@ -560,6 +569,7 @@ bool CSettingsPage::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
     */
     case IDX_SETTINGS_SHOW_DOTS:
     case IDX_SETTINGS_SHOW_SYSTEM_MENU:
+    case IDX_SETTINGS_AUTO_UPDATE:
     case IDX_SETTINGS_SHOW_REAL_FILE_ICONS:
     case IDX_SETTINGS_FULL_ROW:
     case IDX_SETTINGS_SHOW_GRID:

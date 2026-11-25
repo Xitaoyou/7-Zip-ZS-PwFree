@@ -41,10 +41,11 @@ BEGIN
   MY_CONTROL_CHECKBOX ( "   ... allow cloud password database",       IDX_SETTINGS_PWFREE_CLOUD,  m + 10, 244, xc - 10)
   MY_CONTROL_CHECKBOX ( "   ... allow downloaded dictionary",         IDX_SETTINGS_PWFREE_DICT,   m + 10, 256, xc - 10)
   MY_CONTROL_CHECKBOX ( "   ... report where the password came from", IDX_SETTINGS_PWFREE_SOURCE, m + 10, 268, xc - 10)
+  MY_CONTROL_CHECKBOX ( "Automatically check for updates on startup", IDX_SETTINGS_AUTO_UPDATE, m, 282, xc)
 
 #ifdef ZIP7_DARKMODE
-  LTEXT "Color Mode:", IDT_COLOR_MODE, m, 284, xc, 8
-  COMBOBOX IDC_COLOR_MODE, m, 296, spin_x_size, 60, MY_COMBO
+  LTEXT "Color Mode:", IDT_COLOR_MODE, m, 298, xc, 8
+  COMBOBOX IDC_COLOR_MODE, m, 310, spin_x_size, 60, MY_COMBO
 #endif
 END
 

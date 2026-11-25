@@ -272,10 +272,12 @@ CProgressDialog::CProgressDialog():
     _inCancelMessageBox(false),
     _externalCloseMessageWasReceived(false),
     _background(false),
+    _completedSuccess(false),
     WaitMode(false),
     MessagesDisplayed(false),
     CompressingMode(true),
     ShowCompressionInfo(true),
+    StayOnComplete(false),
     _numPostedMessages(0),
     _numAutoSizeMessages(0),
     _numMessages(0),
@@ -1180,6 +1182,25 @@ bool CProgressDialog::OnExternalCloseMessage()
 #endif
       }
     }
+    #ifndef Z7_SFX
+    else if (StayOnComplete && !_cancelWasPressed && !CompressingMode)
+    {
+      _completedSuccess = true;
+      _prevPercentValue = 100u;
+      if (IS_DEFINED_VAL(_progressBar_Range) && _progressBar_Range > 0)
+        _progressBar_Pos = _progressBar_Range;
+      _status = NUiLang::Tr(L"Extraction complete", L"\x89E3\x538B\x5B8C\x6210");
+      SetText(_status);
+      _waitCloseByCancelButton = true;
+      if (!CompleteOpenDir.IsEmpty())
+      {
+        ShowItem_Bool(IDB_PAUSE, true);
+        SetItemText(IDB_PAUSE, NUiLang::Tr(L"Open Folder", L"\x6253\x5F00\x76EE\x5F55"));
+      }
+      ::InvalidateRect(*this, NULL, TRUE);
+      return true;
+    }
+    #endif
   }
 
   if (!g_DisableUserQuestions)
@@ -1278,7 +1299,7 @@ bool CProgressDialog::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
         if (pctFont)
           ::SelectObject(memDC, pctFont);
         RECT hdrRight = { rc.right - pad - NModernUI::ScaleDip(90, dpi), NModernUI::ScaleDip(12, dpi), rc.right - pad, NModernUI::ScaleDip(46, dpi) };
-        ::SetTextColor(memDC, _errorsWereDisplayed ? pal.Danger : pal.Accent);
+        ::SetTextColor(memDC, _errorsWereDisplayed ? pal.Danger : (_completedSuccess ? pal.Success : pal.Accent));
         ::DrawTextW(memDC, pctBuf, -1, &hdrRight, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         // 2. Smooth rounded progress bar
@@ -1289,7 +1310,11 @@ bool CProgressDialog::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
         NModernUI::FillRoundRectGdi(memDC, trackRc, barRad, pal.BorderSubtle, pal.BorderSubtle, false);
 
         double frac = 0.0;
-        if (IS_DEFINED_VAL(_progressBar_Range) && _progressBar_Range > 0 && IS_DEFINED_VAL(_progressBar_Pos))
+        if (_completedSuccess)
+        {
+          frac = 1.0;
+        }
+        else if (IS_DEFINED_VAL(_progressBar_Range) && _progressBar_Range > 0 && IS_DEFINED_VAL(_progressBar_Pos))
         {
           frac = (double)_progressBar_Pos / (double)_progressBar_Range;
           if (frac < 0.0) frac = 0.0;
@@ -1311,6 +1336,8 @@ bool CProgressDialog::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
           COLORREF fillClr = pal.Accent;
           if (_errorsWereDisplayed)
             fillClr = pal.Danger;
+          else if (_completedSuccess)
+            fillClr = pal.Success;
           else if (Sync.Get_Paused())
             fillClr = RGB(217, 119, 6);
           NModernUI::FillRoundRectGdi(memDC, fillRc, barRad, fillClr, fillClr, false);
@@ -1321,9 +1348,11 @@ bool CProgressDialog::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
           ::SelectObject(memDC, fileFont);
         RECT fileRc = { pad, NModernUI::ScaleDip(72, dpi), rc.right - pad, NModernUI::ScaleDip(92, dpi) };
         ::SetTextColor(memDC, pal.TextPrimary);
-        const wchar_t *curFile = _filePath.IsEmpty()
-            ? NUiLang::Tr(L"Preparing...", L"\x6B63\x5728\x51C6\x5907...")
-            : (const wchar_t *)_filePath;
+        const wchar_t *curFile = _completedSuccess
+            ? (!CompleteOpenDir.IsEmpty() ? (const wchar_t *)CompleteOpenDir : NUiLang::Tr(L"Done", L"\x5DF2\x5B8C\x6210"))
+            : (_filePath.IsEmpty()
+                ? NUiLang::Tr(L"Preparing...", L"\x6B63\x5728\x51C6\x5907...")
+                : (const wchar_t *)_filePath);
         ::DrawTextW(memDC, curFile, -1, &fileRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS | DT_NOPREFIX);
 
         // 4. Compact single-line stats: Processed / Total · Speed · Remaining
@@ -1619,6 +1648,21 @@ bool CProgressDialog::OnButtonClicked(unsigned buttonID, HWND buttonHWND)
     }
 
     case IDB_PAUSE:
+      #ifndef Z7_SFX
+      if (_completedSuccess)
+      {
+        if (!CompleteOpenDir.IsEmpty())
+        {
+          UString clean = CompleteOpenDir;
+          while (clean.Len() > 3 && (clean.Back() == L'\\' || clean.Back() == L'/'))
+            clean.DeleteBack();
+          ::ShellExecuteW(NULL, L"open", clean, NULL, NULL, SW_SHOWNORMAL);
+        }
+        MessagesDisplayed = true;
+        End(IDCLOSE);
+        return true;
+      }
+      #endif
       OnPauseButton();
       return true;
     case IDB_PROGRESS_BACKGROUND:

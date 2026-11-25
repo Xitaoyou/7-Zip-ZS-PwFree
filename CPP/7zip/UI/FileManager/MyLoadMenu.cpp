@@ -10,6 +10,7 @@
 #include "../../PropID.h"
 
 #include "../Common/CompressCall.h"
+#include "../Common/AutoUpdate.h"
 
 #include "AboutDialog.h"
 #include "App.h"
@@ -927,6 +928,11 @@ bool OnMenuCommand(HWND hWnd, unsigned id)
     case IDM_HELP_CONTENTS:
       ShowHelpWindow(kFMHelpTopic);
       break;
+    case IDM_CHECK_UPDATE:
+    {
+      NAutoUpdate::StartUpdateCheckAsync(hWnd, true);
+      break;
+    }
     case IDM_ABOUT:
     {
       CAboutDialog dialog;
